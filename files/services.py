@@ -47,7 +47,7 @@ File upload service
 class FileService:
     @staticmethod
     @transaction.atomic
-    def upload_files(user, files:List):
+    def upload_files(user, files:List, description=None):
         uploaded_files=[]
         for file_obj in files:
             checksum=FileService._calculate_checksum(file_obj)
@@ -57,6 +57,7 @@ class FileService:
                     user=user,
                     file=existing_file.file,
                     original_name=file_obj.name,
+                    description=description,
                     file_size=file_obj.size,
                     content_type=file_obj.content_type,
                     checksum=checksum
@@ -67,6 +68,7 @@ class FileService:
                     user=user,
                     file=file_obj,
                     original_name=file_obj.name,
+                    description=description,
                     file_size=file_obj.size,
                     content_type=file_obj.content_type,
                     checksum=checksum
