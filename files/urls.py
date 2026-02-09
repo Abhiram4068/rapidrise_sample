@@ -1,6 +1,6 @@
 from django.urls import path
 from files.views import (
-    RegisterView, LoginView, FileUploadView, FileDownloadView
+    RegisterView, LoginView, FileUploadView, FileDownloadView, FileListView, FileDeleteView
     )
 """
     app level urls
@@ -13,5 +13,7 @@ urlpatterns=[
     path('login/', LoginView.as_view(), name='login'),
     #file sharing urls
     path('file-upload', FileUploadView.as_view(), name='file-upload'),
-    path('<str:file_id>/file-download/', FileDownloadView.as_view(), name='file-download')
+    path('<uuid:file_id>/file-download/', FileDownloadView.as_view(), name='file-download'),
+    path('file-list/', FileListView.as_view(), name='file-list'),
+    path('<uuid:file_id>/file-delete/', FileDeleteView.as_view(), name='file-delete'),
 ]

@@ -42,10 +42,13 @@ def authenticate_and_generate_token(email:str, password:str)->dict:
         }
     }
     
-""""
-File upload service
-"""
+
 class FileService:
+    """
+    Handles uploads with checksum-based deduplication,
+    secure downloads with ownership validation,
+    user-scoped listing, and soft deletion.
+    """
     @staticmethod
     @transaction.atomic
     def upload_files(user, files:List, description=None):
@@ -88,9 +91,6 @@ class FileService:
 
     @staticmethod
     def download_file(user, file_id):
-        """
-        validates ownership and downloads the file if exists
-        """
         file_obj=get_object_or_404(File, id=file_id, user=user)
 
         return FileResponse(
@@ -98,6 +98,19 @@ class FileService:
             as_attachment=True,
             filename=file_obj.original_name
         )
+
+    @staticmethod
+    def user_list_files(user):
+        all_files=File.objects.filter(user=user, is_deleted=False)
+        return all_files
+
+    @staticmethod
+    def user_delete_file(user, file_id):
+        file_obj=get_object_or_404(
+            File, user=user, id=file_id, is_deleted=False
+        )
+        file_obj.is_deleted=True
+        file_obj.save()
 
     @staticmethod
     def _calculate_checksum(file_obj):

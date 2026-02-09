@@ -4,7 +4,7 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from rest_framework import status
 from files.serializers import (
-    RegisterSerializer, LoginSerializer, FileUploadSerialzier
+    RegisterSerializer, LoginSerializer, FileUploadSerialzier, FilesListSerializer
     )
 from files.services import (
     create_user, authenticate_and_generate_token, AuthenticationError ,FileService
@@ -101,3 +101,28 @@ class FileDownloadView(APIView):
     permission_classes=[IsAuthenticated]
     def get(self, request, file_id):
         return FileService.download_file(request.user, file_id)
+
+class FileListView(APIView):
+    permission_classes=[IsAuthenticated]
+    serializer_class=FilesListSerializer
+
+    def get(self, request):
+        user_files=FileService.user_list_files(
+            user=request.user
+        )
+        serializer = self.serializer_class(user_files, many=True)
+
+        return Response(serializer.data)
+
+class FileDeleteView(APIView):
+    permission_classes=[IsAuthenticated]
+    
+    def delete(self, request, file_id):
+        FileService.user_delete_file(
+            request.user,
+            file_id
+        )
+        return Response(
+            {"detail": "File deleted successfully"},
+            status=status.HTTP_204_NO_CONTENT
+        )

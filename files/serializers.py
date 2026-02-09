@@ -85,3 +85,15 @@ class FileUploadSerialzier(serializers.Serializer):
                 f"Insufficient storage space. Only {available_storage} left. Try deleting some files!"
             )
         return data
+
+class FilesListSerializer(serializers.ModelSerializer):
+    class Meta:
+        model=File
+        fields=[
+            'id',
+            'original_name',
+            'file_size',
+            'content_type',
+            'description',
+            'created_at'
+        ]
