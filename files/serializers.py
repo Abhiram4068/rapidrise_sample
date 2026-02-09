@@ -53,6 +53,11 @@ class FileUploadSerialzier(serializers.Serializer):
         ),
         allow_empty=False
     )
+    description = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True
+    )
     
     def validate_files(self, files):
         max_file_size=100*1024*1024

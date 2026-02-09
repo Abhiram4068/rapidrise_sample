@@ -72,18 +72,19 @@ class FileUploadView(APIView):
     permission_classes=[IsAuthenticated]
     
     def post(self, request):
-        serialzier=FileUploadSerialzier(
+        serializer=FileUploadSerialzier(
             data=request.data,
             context={'request':request}
             )
-        if not serialzier.is_valid():
+        if not serializer.is_valid():
             return Response(
                 serialzier.errors,
                 status=status.HTTP_400_BAD_REQUEST
             )
-        files=serialzier.validated_data['files']
+        files=serializer.validated_data['files']
+        description = serializer.validated_data.get("description")
         try:
-            uploaded_files=FileService.upload_files(user=request.user, files=files)
+            uploaded_files=FileService.upload_files(user=request.user, files=files, description=description) 
             return Response(
                 {
                     'message':f'{len(uploaded_files)} files uploaded successfully',
