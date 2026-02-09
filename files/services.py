@@ -4,7 +4,8 @@ from django.db import transaction, IntegrityError
 from rest_framework_simplejwt.tokens import RefreshToken
 import hashlib
 from typing import List
-
+from django.http import FileResponse
+from django.shortcuts import get_object_or_404
 
 
 def create_user(validated_data):
@@ -84,7 +85,20 @@ class FileService:
                 "is_duplicate": is_duplicate,
             })
         return uploaded_files
-        
+
+    @staticmethod
+    def download_file(user, file_id):
+        """
+        validates ownership and downloads the file if exists
+        """
+        file_obj=get_object_or_404(File, id=file_id, user=user)
+
+        return FileResponse(
+            file_obj.file.open('rb'),
+            as_attachment=True,
+            filename=file_obj.original_name
+        )
+
     @staticmethod
     def _calculate_checksum(file_obj):
         hash_md5 = hashlib.md5()

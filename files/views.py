@@ -97,3 +97,7 @@ class FileUploadView(APIView):
                 {'error':str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+class FileDownloadView(APIView):
+    permission_classes=[IsAuthenticated]
+    def get(self, request, file_id):
+        return FileService.download_file(request.user, file_id)
