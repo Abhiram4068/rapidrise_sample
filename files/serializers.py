@@ -1,7 +1,9 @@
-from .models import User, File
+from .models import User, File, FileShareLink
 from rest_framework import serializers
 from django.contrib.auth.password_validation import validate_password
 from django.db import models
+from django.utils import timezone
+from datetime import timedelta
 
 class RegisterSerializer(serializers.ModelSerializer):
     confirm_password=serializers.CharField(write_only=True, min_length=8)
@@ -97,3 +99,49 @@ class FilesListSerializer(serializers.ModelSerializer):
             'description',
             'created_at'
         ]
+
+class FileShareCreateSerializer(serializers.Serializer):
+    recipient_email=serializers.EmailField()
+    expiration_datetime=serializers.IntegerField(min_value=1, max_value=168)
+    message=serializers.CharField(max_length=500, required=False, allow_blank=True)
+
+    def validate_file_id(self, value):
+        request=self.context.get('request')
+        try:
+            file=File.objects.get(id=value, user=request.user)
+        except File.DoesNotExist:
+            raise serializers.ValidationError("Files doesnt exist or you dont have the required permission")
+        return value
+    
+    def validate_expiration_datetime(self, value):
+        if value < 1:
+            raise serializers.ValidationError("Minimum expiration time for the link is 1hr")
+        if value > 168:
+            raise serializers.ValidationError("Maximum expiration time for the link is 168hrs(7 days)")
+        return value
+    
+class FileShareSerializer(serializers.ModelSerializer):
+    """
+    serializer for viewing the shared files
+    """
+    file_name=serializers.CharField(source='files.filename', read_only=True)
+    file_size=serializers.IntegerField(source='file.file_size', read_only=True)
+    owner_email = serializers.EmailField(source='owner.email', read_only=True)
+    is_expired = serializers.SerializerMethodField()
+    share_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model=FileShareLink
+        fields = [
+            'id', 'file_name', 'file_size', 'owner_email', 
+            'recipient_email', 'created_at', 'expiration_datetime',
+            'accessed', 'accessed_at', 'is_active', 'is_expired', 'share_url'
+        ]
+        read_only_fields = ['id', 'created_at', 'accessed', 'accessed_at']
+    def get_is_expired(self, obj):
+        return timezone.now().date()>obj.expiration_datetime
+    def get_share_url(self, obj):
+        request=self.context.get('request')
+        if request:
+            return request.build_absolute_uri(f'/api/share/{obj.share_token}/')
+        return f'/api/share/{obj.share_token}/'
