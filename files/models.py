@@ -64,3 +64,36 @@ class File(models.Model):
     
     def __str__(self):
         return f"{self.original_name} - {self.user.email}"
+
+class FileShareLink(models.Model):
+    id=models.UUIDField(
+        primary_key=True,
+         default=uuid.uuid4,
+        editable=False
+    )
+    file=models.ForeignKey(
+        'File',
+        on_delete=models.CASCADE,
+        related_name='shares',
+        db_index=True
+    )
+    owner=models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='shared_files',
+        db_index=True
+    )
+    recipient_email=models.EmailField(db_index=True)
+    share_token=models.CharField(
+        max_length=64,
+        unique=True,
+        db_index=True
+    )
+    expiration_datetime=models.DateField()
+    created_at=models.DateTimeField(auto_now_add=True)
+    accessed=models.BooleanField(default=False)
+    accessed_at=models.DateTimeField(blank=True, null=True)
+    is_active=models.BooleanField(default=True)
+
+    def __str__(self):
+        return f"{self.file} shared with {self.recipient_email}"
