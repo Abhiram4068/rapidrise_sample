@@ -4,10 +4,10 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from rest_framework import status
 from files.serializers import (
-    RegisterSerializer, LoginSerializer, FileUploadSerialzier, FilesListSerializer
+    RegisterSerializer, LoginSerializer, FileUploadSerialzier, FilesListSerializer, FileShareSerializer, FileShareCreateSerializer
     )
 from files.services import (
-    create_user, authenticate_and_generate_token, AuthenticationError ,FileService
+    create_user, authenticate_and_generate_token, AuthenticationError ,FileService, FileShareService
     )
 
 
@@ -78,7 +78,7 @@ class FileUploadView(APIView):
             )
         if not serializer.is_valid():
             return Response(
-                serialzier.errors,
+                serializer.errors,
                 status=status.HTTP_400_BAD_REQUEST
             )
         files=serializer.validated_data['files']
@@ -126,3 +126,32 @@ class FileDeleteView(APIView):
             {"detail": "File deleted successfully"},
             status=status.HTTP_204_NO_CONTENT
         )
+    
+class FileShareCreateView(APIView):
+    permission_classes=[IsAuthenticated]
+
+    def post(self, request, file_id):
+        serializer=FileShareCreateSerializer(data=request.data, context={'request': request}
+)
+        if serializer.is_valid():
+            try:
+                share=FileShareService.create_share_token(file_id=file_id,
+                                                          owner=request.user,
+                                                          recipient_email=serializer.validated_data['recipient_email'],
+                                                          expiration_hours=serializer.validated_data['expiration_datetime'],
+                                                          message=serializer.validated_data.get('message', '')
+                                                          )
+                response_serializer=FileShareSerializer(share, context={'request': request}
+)
+                return Response(
+                    {'message':'File shared successfully',
+                    'data':response_serializer.data
+                    },
+                    status=status.HTTP_201_CREATED
+                )
+            except ValueError as e:
+                return Response(
+                    {'error':str(e)},
+                    status=status.HTTP_404_OT_FOUND
+                )
+        return Response(serializer.errors, status=400)
