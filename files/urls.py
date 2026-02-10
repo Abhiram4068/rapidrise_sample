@@ -11,9 +11,11 @@ urlpatterns=[
     #auth urls
     path('register/', RegisterView.as_view(), name='register'),
     path('login/', LoginView.as_view(), name='login'),
-    #file sharing urls
+    #file download urls
     path('file-upload', FileUploadView.as_view(), name='file-upload'),
     path('<uuid:file_id>/file-download/', FileDownloadView.as_view(), name='file-download'),
     path('file-list/', FileListView.as_view(), name='file-list'),
     path('<uuid:file_id>/file-delete/', FileDeleteView.as_view(), name='file-delete'),
+    #file share and download urls
+    
 ]
