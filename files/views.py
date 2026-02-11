@@ -3,11 +3,12 @@ from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from rest_framework import status
+from django.http import FileResponse
 from files.serializers import (
-    RegisterSerializer, LoginSerializer, FileUploadSerialzier, FilesListSerializer, FileShareSerializer, FileShareCreateSerializer
+    RegisterSerializer, LoginSerializer, FileUploadSerialzier, FilesListSerializer, FileShareSerializer, FileShareCreateSerializer, PublicFileSerializer
     )
 from files.services import (
-    create_user, authenticate_and_generate_token, AuthenticationError ,FileService, FileShareService
+    create_user, authenticate_and_generate_token, AuthenticationError ,FileService, FileShareService, ViewFileShareService
     )
 
 
@@ -155,3 +156,26 @@ class FileShareCreateView(APIView):
                     status=status.HTTP_404_OT_FOUND
                 )
         return Response(serializer.errors, status=400)
+    
+
+class PublicFileAccessView(APIView):
+    permission_classes=[]
+
+    def get(self, request, token):
+        serializer=PublicFileSerializer(data={'token':token})
+        if not serializer.is_valid():
+            error_message=serializer.errors['token'][0]
+            status_code=410 if 'expired' in str(error_message).lower() else 404
+            return Response({'error':str(error_message)}, status=status_code)
+        
+        share=serializer.share
+
+        ViewFileShareService.mark_as_accessed(share)
+
+        file_obj, filename = ViewFileShareService.get_file_response(share)
+
+        return FileResponse(
+                file_obj,
+                as_attachment=True,
+                filename=filename
+        )

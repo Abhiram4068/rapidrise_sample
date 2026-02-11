@@ -139,9 +139,29 @@ class FileShareSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id', 'created_at', 'accessed', 'accessed_at']
     def get_is_expired(self, obj):
-        return timezone.now().date()>obj.expiration_datetime
+        return timezone.now()>obj.expiration_datetime
     def get_share_url(self, obj):
         request=self.context.get('request')
         if request:
             return request.build_absolute_uri(f'/api/share/{obj.share_token}/')
         return f'/api/share/{obj.share_token}/'
+    
+
+class PublicFileSerializer(serializers.Serializer):
+    token=serializers.CharField()
+
+    def validate_token(self, value):
+        """
+        validate whether the share object exists and is active
+        """
+        try:
+            share=FileShareLink.objects.select_related('file').get(
+                share_token=value,
+                is_active=True
+            )
+        except FileShareLink.DoesNotExist:
+            raise serializers.ValidationError("Invalid or the link have expired")
+        if timezone.now() > share.expiration_datetime:
+            raise serializers.ValidationError("Share link have expired")
+        self.share = share
+        return value
