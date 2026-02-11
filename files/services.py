@@ -158,12 +158,15 @@ class FileShareService:
         if not email_sent:
             print("Error")
         return share
+    
     @staticmethod
     def send_share_email(share, message):
         """
         send email
         """
         email_subject = f"{share.owner.email} shared '{share.file.original_name}' with you"
+        share_url = f"{settings.BACKEND_BASE_URL}/api/files/public/{share.share_token}/"
+
         email_body = f"""
         Hi,
 
@@ -175,7 +178,7 @@ class FileShareService:
         {f'Message from sender: "{message}"' if message else ''}
 
         Click here to access the file:
-
+        {share_url}
 
         This link will expire on {share.expiration_datetime.strftime('%B %d, %Y')}.
 
@@ -198,5 +201,19 @@ class FileShareService:
         except Exception as e:
             print("Error sending file")
             return False
+        
+
+class ViewFileShareService:
+    @staticmethod
+    def get_file_response(share):
+        return share.file.file.open("rb"), share.file.original_name
+
+    
+    @staticmethod
+    def mark_as_accessed(share):
+        if not share.accessed:
+            share.accessed=True
+            share.accessed_at=timezone.now()
+            share.save(update_fields=["accessed", "accessed_at"])
 
 

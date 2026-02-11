@@ -89,7 +89,7 @@ class FileShareLink(models.Model):
         unique=True,
         db_index=True
     )
-    expiration_datetime=models.DateField()
+    expiration_datetime=models.DateTimeField()
     created_at=models.DateTimeField(auto_now_add=True)
     accessed=models.BooleanField(default=False)
     accessed_at=models.DateTimeField(blank=True, null=True)

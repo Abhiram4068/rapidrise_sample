@@ -11,7 +11,8 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
 from pathlib import Path
-
+import pymysql
+pymysql.install_as_MySQLdb()
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -77,8 +78,12 @@ WSGI_APPLICATION = 'config.wsgi.application'
 
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'ENGINE': 'django.db.backends.mysql',
+        'NAME': 'fileshare_db',
+        'HOST':'localhost',
+        'PASSWORD':'12345678',
+        'USER':'root',
+        'PORT':'3306'
     }
 }
 
@@ -129,7 +134,7 @@ REST_FRAMEWORK = {
 from datetime import timedelta
 
 SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=15),
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=30),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
     "AUTH_HEADER_TYPES": ("Bearer",),
 }
@@ -144,3 +149,5 @@ EMAIL_HOST_USER = "abyram394@gmail.com"
 EMAIL_HOST_PASSWORD = "wyqykisicyxxbyce"
 
 DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
+
+BACKEND_BASE_URL = "http://127.0.0.1:8000"
