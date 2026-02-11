@@ -176,6 +176,6 @@ class PublicFileAccessView(APIView):
 
         return FileResponse(
                 file_obj,
-                as_attachment=True,
+                as_attachment=False,
                 filename=filename
         )
