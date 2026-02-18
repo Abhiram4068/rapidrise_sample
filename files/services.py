@@ -117,6 +117,19 @@ class FileService:
         file_obj.save()
 
     @staticmethod
+    def get_user_deleted_files(user):
+        all_deleted_files=File.objects.filter(user=user, is_deleted=True)
+        return all_deleted_files
+    
+    @staticmethod
+    def user_restore_file(user, file_id):
+        file_obj=File.objects.get(user= user, id=file_id)
+        file_obj.is_deleted=False
+        file_obj.save(update_fields=['is_deleted'])
+        print(file_obj.is_deleted)
+        return file_obj
+
+    @staticmethod
     def _calculate_checksum(file_obj):
         hash_md5 = hashlib.md5()
         file_obj.seek(0)
@@ -178,7 +191,7 @@ class FileShareService:
         {f'Message from sender: "{message}"' if message else ''}
 
         Click here to access the file:
-        {share_url}
+        {share_url}    def post(self, request):
 
         This link will expire on {share.expiration_datetime.strftime('%B %d, %Y')}.
 

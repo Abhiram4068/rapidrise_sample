@@ -117,7 +117,8 @@ class FileListView(APIView):
 
 class FileDeleteView(APIView):
     permission_classes=[IsAuthenticated]
-    
+    serializer_class=FilesListSerializer
+
     def delete(self, request, file_id):
         FileService.user_delete_file(
             request.user,
@@ -127,6 +128,21 @@ class FileDeleteView(APIView):
             {"detail": "File deleted successfully"},
             status=status.HTTP_204_NO_CONTENT
         )
+    def get(self, request):
+        deleted_files=FileService.get_user_deleted_files(user=request.user)
+        serializer = self.serializer_class(deleted_files, many=True)
+        return Response(serializer.data)
+
+    def post(self, request, file_id):
+        FileService.user_restore_file(
+            request.user,
+            file_id
+        )
+        return Response(
+            {'detail':'File restored successfuly!'},
+            status=status.HTTP_200_OK
+        )
+
     
 class FileShareCreateView(APIView):
     permission_classes=[IsAuthenticated]

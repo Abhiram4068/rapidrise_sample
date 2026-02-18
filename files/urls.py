@@ -15,7 +15,9 @@ urlpatterns=[
     path('file-upload', FileUploadView.as_view(), name='file-upload'),
     path('<uuid:file_id>/file-download/', FileDownloadView.as_view(), name='file-download'),
     path('file-list/', FileListView.as_view(), name='file-list'),
-    path('<uuid:file_id>/file-delete/', FileDeleteView.as_view(), name='file-delete'),
+    path('files/<uuid:file_id>/file-delete/', FileDeleteView.as_view(), name='file-delete'),
+    path('files/view-recently-deleted/',FileDeleteView.as_view(), name='view-recently-deleted'),
+    path('files/<uuid:file_id>/restore/recently-deleted/',FileDeleteView.as_view(), name='restore-recently-deleted'),
     #file share and download urls
     path('files/<uuid:file_id>/share/', FileShareCreateView.as_view(), name='share-create'),
     path('files/public/<str:token>/', PublicFileAccessView.as_view(), name='public-file-access'),
