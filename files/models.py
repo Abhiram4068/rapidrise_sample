@@ -2,6 +2,8 @@ from django.db import models
 import uuid
 from django.conf import settings
 from django.contrib.auth.models import BaseUserManager, AbstractUser
+from django.utils import timezone
+from datetime import timedelta
 
 class UserManager(BaseUserManager):
     """"
@@ -44,6 +46,8 @@ def user_directory_path(instance, filename):
     """Files uploaded to: media/user_<uuid>/<file_uuid>/<filename>"""
     return f"userfiles/user_{instance.user.id}/{instance.id}/{filename}"
 
+def default_expiry():
+    return timezone.now() + timedelta(days=10)
 
 class File(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -61,9 +65,19 @@ class File(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     is_deleted = models.BooleanField(default=False)
-    
+    deleted_at = models.DateTimeField(null=True, blank=True)
+
+    expires_at = models.DateTimeField(
+        default=default_expiry,
+        db_index=True
+    )
+
     def __str__(self):
         return f"{self.original_name} - {self.user.email}"
+
+@property
+def is_expired(self):
+    return timezone.now() >= self.expires_at
 
 class FileShareLink(models.Model):
     id=models.UUIDField(
@@ -94,6 +108,6 @@ class FileShareLink(models.Model):
     accessed=models.BooleanField(default=False)
     accessed_at=models.DateTimeField(blank=True, null=True)
     is_active=models.BooleanField(default=True)
-
+    revoked_at = models.DateTimeField(null=True, blank=True)
     def __str__(self):
         return f"{self.file} shared with {self.recipient_email}"

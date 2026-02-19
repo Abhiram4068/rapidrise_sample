@@ -98,7 +98,7 @@ class FilesListSerializer(serializers.ModelSerializer):
             'content_type',
             'description',
             'created_at',
-            'is_deleted'
+            'is_deleted',
         ]
 
 class FileShareCreateSerializer(serializers.Serializer):
