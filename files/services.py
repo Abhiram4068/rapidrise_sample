@@ -11,6 +11,7 @@ from django.utils import timezone
 from datetime import timedelta
 from django.core.mail import send_mail
 from django.conf import settings
+from django.utils import timezone
 
 def create_user(validated_data):
     email=validated_data.get('email')
@@ -114,7 +115,8 @@ class FileService:
             File, user=user, id=file_id, is_deleted=False
         )
         file_obj.is_deleted=True
-        file_obj.save()
+        file_obj.deleted_at=timezone.now()
+        file_obj.save(update_fields=['is_deleted', 'deleted_at'])
 
     @staticmethod
     def get_user_deleted_files(user):

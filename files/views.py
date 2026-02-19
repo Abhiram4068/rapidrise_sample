@@ -116,6 +116,9 @@ class FileListView(APIView):
         return Response(serializer.data)
 
 class FileDeleteView(APIView):
+    """
+    View for handling deleting, viewing the recently deleted files and restoring the deleted files within the expiry
+    """
     permission_classes=[IsAuthenticated]
     serializer_class=FilesListSerializer
 
