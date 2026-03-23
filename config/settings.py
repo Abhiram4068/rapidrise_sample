@@ -33,6 +33,16 @@ SECRET_KEY = 'django-insecure-nci8&el^8m4l!d+!5#+hpq9#%orv79^t-+6-ppx_qy@o+dy3n_
 DEBUG = True
 
 ALLOWED_HOSTS = []
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+]
+CORS_ALLOW_CREDENTIALS = True
+SESSION_COOKIE_SAMESITE = "Lax"   # or "None" if cross-site
+SESSION_COOKIE_SECURE = False     # True in production (HTTPS)
+CSRF_COOKIE_SECURE = False
+CSRF_TRUSTED_ORIGINS = [
+    "http://localhost:5173",
+]
 
 
 # Application definition
@@ -47,9 +57,11 @@ INSTALLED_APPS = [
     
     'files',
     'rest_framework',
+    "corsheaders",
 ]
 
 MIDDLEWARE = [
+      "corsheaders.middleware.CorsMiddleware",  
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -82,14 +94,21 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.mysql',
+#         'NAME': 'fileshare_db',
+#         'HOST':'localhost',
+#         'PASSWORD':'12345678',
+#         'USER':'root',
+#         'PORT':'3306'
+#     }
+# }
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.mysql',
-        'NAME': 'fileshare_db',
-        'HOST':'localhost',
-        'PASSWORD':'12345678',
-        'USER':'root',
-        'PORT':'3306'
+        'ENGINE': 'django.db.backends.sqlite3',
+        'NAME': BASE_DIR / 'db.sqlite3',
+        
     }
 }
 
