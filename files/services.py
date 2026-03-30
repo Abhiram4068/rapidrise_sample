@@ -108,7 +108,13 @@ class FileService:
     def user_list_files(user):
         all_files=File.objects.filter(user=user, is_deleted=False)
         return all_files
-
+    
+    @staticmethod
+    def get_file_detail(user, file_id):
+        file_obj=get_object_or_404(
+            File, user=user, id=file_id, is_deleted=False
+        )
+        return file_obj
     @staticmethod
     def user_delete_file(user, file_id):
         file_obj=get_object_or_404(
