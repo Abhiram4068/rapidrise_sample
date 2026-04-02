@@ -73,6 +73,7 @@ class File(models.Model):
         default=default_expiry,
         db_index=True
     )
+    thumbnail = models.ImageField(upload_to='thumbnails/', null=True, blank=True)
 
     def __str__(self):
         return f"{self.original_name} - {self.user.email}"

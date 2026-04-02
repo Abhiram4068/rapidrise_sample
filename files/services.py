@@ -83,6 +83,7 @@ class FileService:
                     checksum=checksum
                 )
                 is_duplicate=False
+            FileService._generate_and_save_thumbnail(file_obj, file_instance)
             uploaded_files.append({
                 'id':str(file_instance.id),
                 'name':file_instance.original_name,
@@ -163,7 +164,91 @@ class FileService:
             hash_md5.update(chunk)
         file_obj.seek(0)
         return hash_md5.hexdigest()
-        
+    
+    @staticmethod
+    def _generate_and_save_thumbnail(file_obj, file_instance):
+        try:
+            import os
+            import io
+            from PIL import Image
+            from django.core.files.base import ContentFile
+
+            name = (file_instance.original_name or "").lower()
+            ct = (file_instance.content_type or "").lower()
+            ext = os.path.splitext(name)[-1]
+
+            thumb = None
+            file_obj.seek(0)
+
+            # Images
+            if ct.startswith("image/") or ext in {".png", ".jpg", ".jpeg", ".gif", ".webp"}:
+                img = Image.open(file_obj)
+                img.load()
+                img.thumbnail((400, 400), Image.LANCZOS)
+                buf = io.BytesIO()
+                img.save(buf, format="PNG")
+                thumb = ContentFile(buf.getvalue(), name="thumb.png")
+
+            # PDF
+            elif "pdf" in ct or ext == ".pdf":
+                from pdf2image import convert_from_bytes
+                file_obj.seek(0)
+                pages = convert_from_bytes(file_obj.read(), first_page=1, last_page=1, size=(400, None))
+                if pages:
+                    buf = io.BytesIO()
+                    pages[0].save(buf, format="PNG")
+                    thumb = ContentFile(buf.getvalue(), name="thumb.png")
+
+            # Office (docx, xlsx, pptx)
+            elif ext in {".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt"} or \
+                any(x in ct for x in ["word", "excel", "powerpoint", "spreadsheet", "presentation"]):
+                import subprocess, tempfile
+                file_obj.seek(0)
+                with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+                    tmp.write(file_obj.read())
+                    tmp_path = tmp.name
+                out_dir = tempfile.mkdtemp()
+                result = subprocess.run(
+                    ["libreoffice", "--headless", "--convert-to", "png", "--outdir", out_dir, tmp_path],
+                    capture_output=True, timeout=60
+                )
+                os.unlink(tmp_path)
+                if result.returncode == 0:
+                    png_files = sorted(f for f in os.listdir(out_dir) if f.endswith(".png"))
+                    if png_files:
+                        img = Image.open(os.path.join(out_dir, png_files[0]))
+                        img.thumbnail((400, 400), Image.LANCZOS)
+                        buf = io.BytesIO()
+                        img.save(buf, format="PNG")
+                        thumb = ContentFile(buf.getvalue(), name="thumb.png")
+
+            # Video
+            elif ct.startswith("video/") or ext in {".mp4", ".mov", ".mkv", ".webm"}:
+                import subprocess, tempfile
+                file_obj.seek(0)
+                with tempfile.NamedTemporaryFile(suffix=ext or ".mp4", delete=False) as tmp:
+                    tmp.write(file_obj.read())
+                    tmp_path = tmp.name
+                out_path = tmp_path + "_thumb.png"
+                subprocess.run(
+                    ["ffmpeg", "-y", "-i", tmp_path, "-ss", "00:00:01", "-vframes", "1", "-vf", "scale=400:-1", out_path],
+                    capture_output=True, timeout=30
+                )
+                os.unlink(tmp_path)
+                if os.path.exists(out_path):
+                    img = Image.open(out_path)
+                    img.thumbnail((400, 400), Image.LANCZOS)
+                    buf = io.BytesIO()
+                    img.save(buf, format="PNG")
+                    thumb = ContentFile(buf.getvalue(), name="thumb.png")
+                    os.unlink(out_path)
+
+            if thumb:
+                file_instance.thumbnail.save(f"thumb_{file_instance.id}.png", thumb, save=True)
+
+        except Exception as e:
+            pass  # never break the upload if thumbnail fails
+            
             
     
 class FileShareService:

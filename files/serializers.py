@@ -90,6 +90,7 @@ class FileUploadSerialzier(serializers.Serializer):
         return data
 
 class FilesListSerializer(serializers.ModelSerializer):
+    thumbnail_url = serializers.SerializerMethodField()
     class Meta:
         model=File
         fields=[
@@ -102,8 +103,14 @@ class FilesListSerializer(serializers.ModelSerializer):
             'created_at',
             'display_name',
             'is_deleted',
-            'updated_at'
+            'updated_at',
+            'thumbnail_url',
         ]
+    def get_thumbnail_url(self, obj):
+        request = self.context.get('request')
+        if obj.thumbnail and request:
+            return request.build_absolute_uri(obj.thumbnail.url)
+        return None
 
 
 class FileUpdateSerializer(serializers.ModelSerializer):
