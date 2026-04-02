@@ -1,14 +1,53 @@
+from django.conf import settings
 from django.shortcuts import render
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from rest_framework import status
+from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.exceptions import TokenError
 from django.http import FileResponse
 from files.serializers import (
-    RegisterSerializer, LoginSerializer, FileUploadSerialzier, FilesListSerializer, FileShareSerializer, FileShareCreateSerializer, PublicFileSerializer
+    RegisterSerializer, LoginSerializer, FileUploadSerialzier, FilesListSerializer, FileUpdateSerializer ,FileShareSerializer, FileShareCreateSerializer, PublicFileSerializer
     )
 from files.services import (
     create_user, authenticate_and_generate_token, AuthenticationError ,FileService, FileShareService, ViewFileShareService
+    )
+from rest_framework.pagination import PageNumberPagination
+
+def _set_auth_cookies(response, access_token, refresh_token=None):
+    response.set_cookie(
+        key=settings.AUTH_COOKIE_ACCESS,
+        value=access_token,
+        httponly=settings.AUTH_COOKIE_HTTP_ONLY,
+        secure=settings.AUTH_COOKIE_SECURE,
+        samesite=settings.AUTH_COOKIE_SAMESITE,
+        max_age=int(settings.SIMPLE_JWT["ACCESS_TOKEN_LIFETIME"].total_seconds()),
+        path="/",
+    )
+
+    if refresh_token:
+        response.set_cookie(
+            key=settings.AUTH_COOKIE_REFRESH,
+            value=refresh_token,
+            httponly=settings.AUTH_COOKIE_HTTP_ONLY,
+            secure=settings.AUTH_COOKIE_SECURE,
+            samesite=settings.AUTH_COOKIE_SAMESITE,
+            max_age=int(settings.SIMPLE_JWT["REFRESH_TOKEN_LIFETIME"].total_seconds()),
+            path="/api/token/refresh/",
+        )
+
+
+def _clear_auth_cookies(response):
+    response.delete_cookie(
+        key=settings.AUTH_COOKIE_ACCESS,
+        path="/",
+        samesite=settings.AUTH_COOKIE_SAMESITE,
+    )
+    response.delete_cookie(
+        key=settings.AUTH_COOKIE_REFRESH,
+        path="/api/token/refresh/",
+        samesite=settings.AUTH_COOKIE_SAMESITE,
     )
 
 
@@ -48,7 +87,7 @@ class LoginView(APIView):
         
         try:
             result=authenticate_and_generate_token(
-                email=serializer._validated_data['email'],
+                email=serializer.validated_data['email'],
                 password=serializer.validated_data['password']
             )
         except AuthenticationError as e:
@@ -58,16 +97,55 @@ class LoginView(APIView):
             )
         user=result['user']
         tokens=result['tokens']
-        return Response({
+        response = Response({
             'message':'Login successful',
             'user':{
                 'id':user.id,
                 'email':user.email,
                 'first_name':user.first_name
-                },
-            'tokens':tokens
+                }
         },status=status.HTTP_200_OK
         )
+        _set_auth_cookies(response, tokens["access"], tokens["refresh"])
+
+        return response
+
+
+class TokenRefreshCookieView(APIView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        refresh_token = request.COOKIES.get(settings.AUTH_COOKIE_REFRESH)
+        if not refresh_token:
+            return Response(
+                {"detail": "Refresh token cookie missing"},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        try:
+            refresh = RefreshToken(refresh_token)
+            access = str(refresh.access_token)
+        except TokenError:
+            return Response(
+                {"detail": "Invalid refresh token"},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        response = Response({"message": "Token refreshed"}, status=status.HTTP_200_OK)
+        _set_auth_cookies(response, access)
+        return response
+
+
+class LogoutView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def post(self, request):
+        response = Response({"message": "Logged out"}, status=status.HTTP_200_OK)
+        _clear_auth_cookies(response)
+        return response
+
        
 class FileUploadView(APIView):
     permission_classes=[IsAuthenticated]
@@ -102,18 +180,80 @@ class FileDownloadView(APIView):
     permission_classes=[IsAuthenticated]
     def get(self, request, file_id):
         return FileService.download_file(request.user, file_id)
+    
 
+class DefaultPageNumberPagination(PageNumberPagination):
+  page_size = 12
+  page_size_query_param = "page_size"
+  max_page_size = 100
+
+  
 class FileListView(APIView):
-    permission_classes=[IsAuthenticated]
-    serializer_class=FilesListSerializer
+  permission_classes = [IsAuthenticated]
+  serializer_class = FilesListSerializer
+  pagination_class = DefaultPageNumberPagination
+  def get(self, request):
+      search = (request.query_params.get("search") or "").strip()
+      qs = FileService.user_list_files(user=request.user)  # should be a queryset
+      # Make sure you have a stable order
+      qs = qs.order_by("-created_at")
+      if search:
+          # Must match serializer/view field
+          qs = qs.filter(original_name__icontains=search)
+      paginator = self.pagination_class()
+      page_qs = paginator.paginate_queryset(qs, request, view=self)
+      serializer = self.serializer_class(page_qs, many=True)
+      
+      return paginator.get_paginated_response(serializer.data)
+  
+class FileDetailView(APIView):
+  
+  permission_classes = [IsAuthenticated]
+  serializer_class = FilesListSerializer
 
-    def get(self, request):
-        user_files=FileService.user_list_files(
-            user=request.user
+  def get(self, request, pk):
+        
+        """
+        Retrieve single file details for the authenticated user.
+        """
+
+        # Service layer call
+        file_obj = FileService.get_file_detail(
+            user=request.user,
+            file_id=pk
         )
-        serializer = self.serializer_class(user_files, many=True)
 
-        return Response(serializer.data)
+        serializer = self.serializer_class(file_obj)
+
+        return Response(serializer.data, status=status.HTTP_200_OK)
+    
+class FileUpdateView(APIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = FileUpdateSerializer
+    def patch(self, request, pk):
+        """
+        Update file metadata (display_name, description only)
+        """
+        print(request.data)
+        serializer = self.serializer_class(
+            data=request.data,
+            partial=True
+        )
+        serializer.is_valid(raise_exception=True)
+        file_obj = FileService.get_file_detail(
+            user=request.user,
+            file_id=pk
+        )
+        updated_file_obj = FileService.update_file_details(
+            file_obj=file_obj,
+            data=serializer.validated_data
+        )
+
+        return Response(
+            self.serializer_class(updated_file_obj).data,
+            status=status.HTTP_200_OK
+        )
+
 
 class FileDeleteView(APIView):
     """
@@ -127,10 +267,9 @@ class FileDeleteView(APIView):
             request.user,
             file_id
         )
-        return Response(
-            {"detail": "File deleted successfully"},
-            status=status.HTTP_204_NO_CONTENT
-        )
+        return Response(status=status.HTTP_204_NO_CONTENT)
+    
+
     def get(self, request):
         deleted_files=FileService.get_user_deleted_files(user=request.user)
         serializer = self.serializer_class(deleted_files, many=True)
@@ -147,6 +286,20 @@ class FileDeleteView(APIView):
         )
 
     
+class FileArchiveView(APIView):
+    """
+    View for handling archiving, viewing the archived files and restoring the archived files 
+    """
+    permission_classes=[IsAuthenticated]
+    serializer_class=FilesListSerializer
+    def post(self, request, file_id):
+        FileService.user_archive_file(
+            request.user,
+            file_id
+        )
+        return Response(
+            status=status.HTTP_204_NO_CONTENT)
+
 class FileShareCreateView(APIView):
     permission_classes=[IsAuthenticated]
 

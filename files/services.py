@@ -106,9 +106,25 @@ class FileService:
 
     @staticmethod
     def user_list_files(user):
-        all_files=File.objects.filter(user=user, is_deleted=False)
+        all_files=File.objects.filter(user=user, is_deleted=False, is_archive=False)
         return all_files
+    
+    @staticmethod
+    def get_file_detail(user, file_id):
+        file_obj=get_object_or_404(
+            File, user=user, id=file_id, is_deleted=False, is_archive=False
+        )
+        return file_obj
+    
+    @staticmethod
+    def update_file_details(file_obj, data):
+        file_obj.display_name = data.get("display_name", file_obj.display_name)
+        file_obj.description = data.get("description", file_obj.description)
+        file_obj.is_starred = data.get("is_starred", file_obj.is_starred)
+        file_obj.save(update_fields=["display_name", "description", "updated_at","is_starred"])
 
+        return file_obj
+    
     @staticmethod
     def user_delete_file(user, file_id):
         file_obj=get_object_or_404(
@@ -117,6 +133,14 @@ class FileService:
         file_obj.is_deleted=True
         file_obj.deleted_at=timezone.now()
         file_obj.save(update_fields=['is_deleted', 'deleted_at'])
+
+    @staticmethod
+    def user_archive_file(user, file_id):
+        file_obj=get_object_or_404(
+            File, user=user, id=file_id, is_deleted=False, is_archive=False
+        )
+        file_obj.is_archive=True
+        file_obj.save(update_fields=['is_archive'])
 
     @staticmethod
     def get_user_deleted_files(user):
