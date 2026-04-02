@@ -1,6 +1,6 @@
 from django.urls import path
 from files.views import (
-    RegisterView, LoginView, TokenRefreshCookieView, LogoutView, FileUploadView, FileDownloadView, FileListView, FileDetailView,FileDeleteView, FileShareCreateView, PublicFileAccessView
+    RegisterView, LoginView, TokenRefreshCookieView, LogoutView, FileUploadView, FileDownloadView, FileListView, FileUpdateView, FileArchiveView,FileDetailView,FileDeleteView, FileShareCreateView, PublicFileAccessView
     )
 """
     app level urls
@@ -14,11 +14,13 @@ urlpatterns=[
     path('token/refresh/', TokenRefreshCookieView.as_view(), name='token-refresh'),
     path('logout/', LogoutView.as_view(), name='logout'),
     #file download urls
-    path('file-upload', FileUploadView.as_view(), name='file-upload'),
+    path('files/', FileUploadView.as_view(), name='file-upload'),
     path('<uuid:file_id>/file-download/', FileDownloadView.as_view(), name='file-download'),
     path('file-list/', FileListView.as_view(), name='file-list'),
+    path('files/<uuid:pk>/update/', FileUpdateView.as_view(), name='file-update'),
     path('files/<uuid:pk>/', FileDetailView.as_view(), name='file-detail'),
     path('files/<uuid:file_id>/file-delete/', FileDeleteView.as_view(), name='file-delete'),
+    path('files/<uuid:file_id>/archive/', FileArchiveView.as_view(), name='file-archive'),
     path('files/view-recently-deleted/',FileDeleteView.as_view(), name='view-recently-deleted'),
     path('files/<uuid:file_id>/restore/recently-deleted/',FileDeleteView.as_view(), name='restore-recently-deleted'),
     #file share and download urls

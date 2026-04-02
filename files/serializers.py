@@ -95,12 +95,26 @@ class FilesListSerializer(serializers.ModelSerializer):
         fields=[
             'id',
             'original_name',
+            'is_starred',
             'file_size',
             'content_type',
             'description',
             'created_at',
+            'display_name',
             'is_deleted',
+            'updated_at'
         ]
+
+
+class FileUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = File
+        fields = ["display_name", "description", "updated_at", "is_starred"]
+
+    def validate_display_name(self, value):
+        if value and len(value.strip()) == 0:
+            raise serializers.ValidationError("Display name cannot be empty.")
+        return value
 
 class FileShareCreateSerializer(serializers.Serializer):
     recipient_email=serializers.EmailField()

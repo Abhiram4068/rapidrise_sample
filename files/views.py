@@ -8,7 +8,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError
 from django.http import FileResponse
 from files.serializers import (
-    RegisterSerializer, LoginSerializer, FileUploadSerialzier, FilesListSerializer, FileShareSerializer, FileShareCreateSerializer, PublicFileSerializer
+    RegisterSerializer, LoginSerializer, FileUploadSerialzier, FilesListSerializer, FileUpdateSerializer ,FileShareSerializer, FileShareCreateSerializer, PublicFileSerializer
     )
 from files.services import (
     create_user, authenticate_and_generate_token, AuthenticationError ,FileService, FileShareService, ViewFileShareService
@@ -203,6 +203,7 @@ class FileListView(APIView):
       paginator = self.pagination_class()
       page_qs = paginator.paginate_queryset(qs, request, view=self)
       serializer = self.serializer_class(page_qs, many=True)
+      
       return paginator.get_paginated_response(serializer.data)
   
 class FileDetailView(APIView):
@@ -226,6 +227,32 @@ class FileDetailView(APIView):
 
         return Response(serializer.data, status=status.HTTP_200_OK)
     
+class FileUpdateView(APIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = FileUpdateSerializer
+    def patch(self, request, pk):
+        """
+        Update file metadata (display_name, description only)
+        """
+        print(request.data)
+        serializer = self.serializer_class(
+            data=request.data,
+            partial=True
+        )
+        serializer.is_valid(raise_exception=True)
+        file_obj = FileService.get_file_detail(
+            user=request.user,
+            file_id=pk
+        )
+        updated_file_obj = FileService.update_file_details(
+            file_obj=file_obj,
+            data=serializer.validated_data
+        )
+
+        return Response(
+            self.serializer_class(updated_file_obj).data,
+            status=status.HTTP_200_OK
+        )
 
 
 class FileDeleteView(APIView):
@@ -240,10 +267,9 @@ class FileDeleteView(APIView):
             request.user,
             file_id
         )
-        return Response(
-            {"detail": "File deleted successfully"},
-            status=status.HTTP_204_NO_CONTENT
-        )
+        return Response(status=status.HTTP_204_NO_CONTENT)
+    
+
     def get(self, request):
         deleted_files=FileService.get_user_deleted_files(user=request.user)
         serializer = self.serializer_class(deleted_files, many=True)
@@ -260,6 +286,20 @@ class FileDeleteView(APIView):
         )
 
     
+class FileArchiveView(APIView):
+    """
+    View for handling archiving, viewing the archived files and restoring the archived files 
+    """
+    permission_classes=[IsAuthenticated]
+    serializer_class=FilesListSerializer
+    def post(self, request, file_id):
+        FileService.user_archive_file(
+            request.user,
+            file_id
+        )
+        return Response(
+            status=status.HTTP_204_NO_CONTENT)
+
 class FileShareCreateView(APIView):
     permission_classes=[IsAuthenticated]
 
