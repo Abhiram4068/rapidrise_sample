@@ -7,11 +7,12 @@ from rest_framework import status
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError
 from django.http import FileResponse
+from django.core.exceptions import ValidationError
 from files.serializers import (
-    RegisterSerializer, LoginSerializer, FileUploadSerialzier, FilesListSerializer, FileUpdateSerializer ,FileShareSerializer, FileShareCreateSerializer, PublicFileSerializer
+    RegisterSerializer, LoginSerializer, FileUploadSerialzier, FilesListSerializer, FileUpdateSerializer ,FileShareSerializer, FileShareCreateSerializer, PublicFileSerializer,CollectionSerializer, CollectionFileSerializer
     )
 from files.services import (
-    create_user, authenticate_and_generate_token, AuthenticationError ,FileService, FileShareService, ViewFileShareService
+    create_user, authenticate_and_generate_token, AuthenticationError ,FileService, FileShareService, ViewFileShareService, CollectionService
     )
 from rest_framework.pagination import PageNumberPagination
 
@@ -351,3 +352,103 @@ class PublicFileAccessView(APIView):
                 as_attachment=False,
                 filename=filename
         )
+        
+        
+class CollectionListCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+
+        collections = CollectionService.get_user_collections(request.user)
+
+        serializer = CollectionSerializer(collections, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def post(self, request):
+        serializer = CollectionSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            collection = CollectionService.create_collection(
+                user=request.user,
+                validated_data=serializer.validated_data,
+            )
+        except ValidationError as e:
+            return Response({"detail": e.message}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(
+            CollectionSerializer(collection).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class CollectionDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, collection_id):
+        try:
+            collection = CollectionService.get_single_collection(request.user, collection_id)
+        except ValidationError as e:
+            return Response({"detail": e.message}, status=status.HTTP_404_NOT_FOUND)
+        serializer = CollectionSerializer(collection)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def patch(self, request, collection_id):
+        serializer = CollectionSerializer(data=request.data, partial=True)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            collection = CollectionService.update_collection(
+                user=request.user,
+                collection_id=collection_id,
+                validated_data=serializer.validated_data,
+            )
+        except ValidationError as e:
+            return Response({"detail": e.message}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(CollectionSerializer(collection).data, status=status.HTTP_200_OK)
+
+    def delete(self, request, collection_id):
+        try:
+            CollectionService.delete_collection(request.user, collection_id)
+        except ValidationError as e:
+            return Response({"detail": e.message}, status=status.HTTP_404_NOT_FOUND)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class CollectionFileView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request, collection_id):
+        """List all files inside a collection."""
+        try:
+            collection_files = CollectionService.get_collection_files(request.user, collection_id)
+        except ValidationError as e:
+            return Response({"detail": e.message}, status=status.HTTP_404_NOT_FOUND)
+        
+        serializer = CollectionFileSerializer(collection_files, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def post(self, request, collection_id, file_id):
+        """Add a file to a collection."""
+        serializer = CollectionFileSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            collection_file = CollectionService.add_file_to_collection(
+                user=request.user,
+                collection_id=collection_id,
+                file_id=file_id
+            )
+        except ValidationError as e:
+            return Response({"detail": e.message}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(
+            CollectionFileSerializer(collection_file).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    def delete(self, request, collection_id, file_id):
+        """Remove a file from a collection."""
+        try:
+            CollectionService.remove_file_from_collection(request.user, collection_id, file_id)
+        except ValidationError as e:
+            return Response({"detail": e.message}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(status=status.HTTP_204_NO_CONTENT)

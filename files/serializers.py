@@ -1,4 +1,4 @@
-from .models import User, File, FileShareLink
+from .models import User, File, FileShareLink, Collection, CollectionFile
 from rest_framework import serializers
 from django.contrib.auth.password_validation import validate_password
 from django.db import models
@@ -115,6 +115,46 @@ class FileUpdateSerializer(serializers.ModelSerializer):
         if value and len(value.strip()) == 0:
             raise serializers.ValidationError("Display name cannot be empty.")
         return value
+    
+    
+class CollectionSerializer(serializers.ModelSerializer):
+    total_files = serializers.IntegerField(read_only=True)
+    total_size = serializers.IntegerField(read_only=True)
+
+    created_at = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", read_only=True)
+    updated_at = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", read_only=True)
+
+    class Meta:
+        model = Collection
+        fields = [
+            "id",
+            "name",
+            "description",
+            "created_at",
+            "updated_at",
+            "total_files",
+            "total_size",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+
+class CollectionFileSerializer(serializers.ModelSerializer):
+    file_name = serializers.CharField(source="file.original_name", read_only=True)
+    file_size = serializers.IntegerField(source="file.file_size", read_only=True)
+    content_type = serializers.CharField(source="file.content_type", read_only=True)
+    
+    added_at = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", read_only=True)
+
+    class Meta:
+        model = CollectionFile
+        fields = [
+            "id",
+            "file_name",
+            "file_size",
+            "content_type",
+            "added_at",
+        ]
+        read_only_fields = ["id", "added_at"]
 
 class FileShareCreateSerializer(serializers.Serializer):
     recipient_email=serializers.EmailField()

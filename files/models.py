@@ -4,6 +4,7 @@ from django.conf import settings
 from django.contrib.auth.models import BaseUserManager, AbstractUser
 from django.utils import timezone
 from datetime import timedelta
+from django.db.models import Sum
 
 class UserManager(BaseUserManager):
     """"
@@ -39,6 +40,8 @@ class User(AbstractUser):
     objects=UserManager()
     def __str__(self):
         return self.email
+    class Meta:
+        db_table = "auth_users"
 
 
 
@@ -73,13 +76,15 @@ class File(models.Model):
         default=default_expiry,
         db_index=True
     )
+    class Meta:
+        db_table = "files"
 
     def __str__(self):
         return f"{self.original_name} - {self.user.email}"
 
-@property
-def is_expired(self):
-    return timezone.now() >= self.expires_at
+    @property
+    def is_expired(self):
+        return timezone.now() >= self.expires_at
 
 class FileShareLink(models.Model):
     id=models.UUIDField(
@@ -113,3 +118,77 @@ class FileShareLink(models.Model):
     revoked_at = models.DateTimeField(null=True, blank=True)
     def __str__(self):
         return f"{self.file} shared with {self.recipient_email}"
+    class Meta:
+        db_table = "file_share_links"
+        ordering = ["-created_at"]
+    
+#collections for files
+class Collection(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="collections"
+    )
+    name = models.CharField(max_length=255)
+    description = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "collections"
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "name"],
+                name="unique_collection_name_per_user"
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.name} ({self.user.email})"
+
+
+    def total_files(self):
+        return self.collection_files.count()  # fixed: count() not Count()
+
+
+    def total_size(self):
+        result = self.collection_files.aggregate(
+            total=Sum("file__file_size")
+        )
+        return result["total"] or 0
+
+
+class CollectionFile(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    collection = models.ForeignKey(
+        Collection,
+        on_delete=models.CASCADE,
+        related_name="collection_files"
+    )
+    file = models.ForeignKey(
+        File,
+        on_delete=models.CASCADE,
+        related_name="file_collections"
+    )
+    added_at = models.DateTimeField(auto_now_add=True)
+    added_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="added_collection_files"
+    )
+
+    class Meta:
+        db_table = "collection_files"
+        ordering = ["-added_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["collection", "file"],
+                name="unique_file_per_collection"
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.file.original_name} → {self.collection.name}"
