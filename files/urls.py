@@ -12,7 +12,7 @@ urlpatterns=[
     #auth urls
     path('auth/register/', RegisterView.as_view(), name='register'),
     path('auth/login/', LoginView.as_view(), name='login'),
-    path('auth/token/refresh/', TokenRefreshCookieView.as_view(), name='token-refresh'),
+    path('token/refresh/', TokenRefreshCookieView.as_view(), name='token-refresh'),
     path('auth/logout/', LogoutView.as_view(), name='logout'),
     #file download urls
     path('files/', FileUploadView.as_view(), name='file-upload'),
