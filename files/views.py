@@ -360,9 +360,15 @@ class CollectionListCreateView(APIView):
     def get(self, request):
 
         collections = CollectionService.get_user_collections(request.user)
-
+        total_collections=collections.count()
         serializer = CollectionSerializer(collections, many=True)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response(
+            {
+                "total_collections":total_collections,
+                "collections":serializer.data
+            },             
+            status=status.HTTP_200_OK
+            )
 
     def post(self, request):
         serializer = CollectionSerializer(data=request.data)
@@ -421,11 +427,19 @@ class CollectionFileView(APIView):
         """List all files inside a collection."""
         try:
             collection_files = CollectionService.get_collection_files(request.user, collection_id)
+            total_files=collection_files.count()
         except ValidationError as e:
             return Response({"detail": e.message}, status=status.HTTP_404_NOT_FOUND)
         
         serializer = CollectionFileSerializer(collection_files, many=True)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        
+        return Response(
+           {"collection_files": serializer.data,
+            "count":total_files
+            },
+           
+            status=status.HTTP_200_OK
+            )
 
     def post(self, request, collection_id, file_id):
         """Add a file to a collection."""

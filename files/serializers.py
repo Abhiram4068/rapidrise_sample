@@ -130,6 +130,7 @@ class CollectionSerializer(serializers.ModelSerializer):
             "id",
             "name",
             "description",
+            "is_starred",
             "created_at",
             "updated_at",
             "total_files",

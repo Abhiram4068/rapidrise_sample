@@ -134,7 +134,8 @@ class Collection(models.Model):
     description = models.TextField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-
+    is_starred = models.BooleanField(default=False)
+    
     class Meta:
         db_table = "collections"
         ordering = ["-created_at"]
