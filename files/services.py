@@ -1,5 +1,5 @@
 from django.contrib.auth import get_user_model
-from .models import User, File, FileShareLink
+from .models import User, File, FileShareLink, Collection, CollectionFile
 from django.db import transaction, IntegrityError
 from rest_framework_simplejwt.tokens import RefreshToken
 import hashlib
@@ -12,6 +12,7 @@ from datetime import timedelta
 from django.core.mail import send_mail
 from django.conf import settings
 from django.utils import timezone
+from django.db.models import Sum, Count
 
 def create_user(validated_data):
     email=validated_data.get('email')
@@ -164,7 +165,129 @@ class FileService:
         file_obj.seek(0)
         return hash_md5.hexdigest()
         
-            
+from django.db.models import Sum, Count
+from django.core.exceptions import ValidationError, PermissionDenied
+from .models import Collection, CollectionFile, File
+
+
+class CollectionService:
+
+    @staticmethod
+    def get_user_collections(user):
+        """Return all collections for a user with file count and size annotated."""
+        return (
+            Collection.objects.filter(user=user)
+            .annotate(
+                total_files=Count("collection_files"),
+                total_size=Sum("collection_files__file__file_size"),
+            )
+        )
+
+    @staticmethod
+    def get_single_collection(user, collection_id):
+        """Return a single collection with annotations. Raises if not found or not owner."""
+        try:
+            return (
+                Collection.objects.filter(user=user)
+                .annotate(
+                    total_files=Count("collection_files"),
+                    total_size=Sum("collection_files__file__file_size"),
+                )
+                .get(id=collection_id)
+            )
+        except Collection.DoesNotExist:
+            raise ValidationError("Collection not found.")
+
+    @staticmethod
+    def create_collection(user, validated_data):
+        """Create a new collection for the user."""
+        try:
+            return Collection.objects.create(user=user, **validated_data)
+        except IntegrityError:
+            raise ValidationError("You already have a collection with this name. Please choose a different name.")
+
+    @staticmethod
+    def update_collection(user, collection_id, validated_data):
+        """Update name or description of a collection."""
+        try:
+            collection = Collection.objects.get(id=collection_id, user=user)
+        except Collection.DoesNotExist:
+            raise ValidationError("Collection not found.")
+
+        for attr, value in validated_data.items():
+                setattr(collection, attr, value)
+        try:
+            collection.save()
+        except IntegrityError:
+            raise ValidationError("A collection with this name already exists.")
+        return collection
+
+
+    @staticmethod
+    def delete_collection(user, collection_id):
+        """Hard delete a collection. Cascades to CollectionFile rows."""
+        try:
+            collection = Collection.objects.get(id=collection_id, user=user)
+        except Collection.DoesNotExist:
+            raise ValidationError("Collection not found.")
+        collection.delete()
+
+    @staticmethod
+    def add_file_to_collection(user, collection_id, file_id):
+        """
+        Add a file to a collection.
+        - Validates the collection belongs to the user.
+        - Validates the file belongs to the user.
+        - Prevents duplicate entries via get_or_create.
+        """
+        try:
+            collection = Collection.objects.get(id=collection_id, user=user)
+        except Collection.DoesNotExist:
+            raise ValidationError("Collection not found.")
+
+        try:
+            file = File.objects.get(id=file_id, user=user)
+        except File.DoesNotExist:
+            raise ValidationError("File not found.")
+
+        collection_file, created = CollectionFile.objects.get_or_create(
+            collection=collection,
+            file=file,
+            defaults={"added_by": user},
+        )
+
+        if not created:
+            raise ValidationError("This file is already in the collection.")
+
+        return collection_file
+    
+    
+    @staticmethod
+    def get_collection_files(user, collection_id):
+        """Return all files inside a collection. Validates ownership."""
+        try:
+            collection = Collection.objects.get(id=collection_id, user=user)
+        except Collection.DoesNotExist:
+            raise ValidationError("Collection not found.")
+        
+        return CollectionFile.objects.filter(
+            collection=collection
+        ).select_related("file")
+
+    @staticmethod
+    def remove_file_from_collection(user, collection_id, file_id):
+        """Remove a file from a collection."""
+        try:
+            collection = Collection.objects.get(id=collection_id, user=user)
+        except Collection.DoesNotExist:
+            raise ValidationError("Collection not found.")
+
+        deleted_count, _ = CollectionFile.objects.filter(
+            collection=collection, file__id=file_id
+        ).delete()
+
+        if deleted_count == 0:
+            raise ValidationError("File not found in this collection.")  
     
 class FileShareService:
     """
