@@ -142,6 +142,11 @@ class FileService:
         )
         file_obj.is_archive=True
         file_obj.save(update_fields=['is_archive'])
+        
+    @staticmethod
+    def get_user_starred_files(user):
+        starred_files=File.objects.filter(user=user, is_starred=True)
+        return starred_files
 
     @staticmethod
     def get_user_deleted_files(user):

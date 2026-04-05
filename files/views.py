@@ -300,6 +300,18 @@ class FileArchiveView(APIView):
         )
         return Response(
             status=status.HTTP_204_NO_CONTENT)
+        
+        
+class FileStarredList(APIView):
+    """"
+    Lists all the files that are starred by the user
+    """
+    permission_classes=[IsAuthenticated]
+    serializer_class=FilesListSerializer
+    def get(self, request):
+        starred=FileService.get_user_starred_files(request.user)
+        serializer = FilesListSerializer(starred, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 class FileShareCreateView(APIView):
     permission_classes=[IsAuthenticated]
