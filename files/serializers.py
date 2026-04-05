@@ -90,6 +90,9 @@ class FileUploadSerialzier(serializers.Serializer):
         return data
 
 class FilesListSerializer(serializers.ModelSerializer):
+    created_at = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", read_only=True)
+    updated_at = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", read_only=True)
+    file_size = serializers.SerializerMethodField()
     class Meta:
         model=File
         fields=[
@@ -104,6 +107,19 @@ class FilesListSerializer(serializers.ModelSerializer):
             'is_deleted',
             'updated_at'
         ]
+    def get_file_size(self, obj):
+        size = obj.file_size or 0 
+        kb = 1024
+        mb = 1024 * 1024
+        gb = 1024 * 1024 * 1024
+        if size < kb:
+            return f"{size} B"
+        elif size < mb:
+            return f"{size / kb:.2f} KB"
+        elif size < gb:
+            return f"{size / mb:.2f} MB"
+        else:
+            return f"{size / gb:.2f} GB"
 
 
 class FileUpdateSerializer(serializers.ModelSerializer):

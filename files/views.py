@@ -309,9 +309,30 @@ class FileStarredList(APIView):
     permission_classes=[IsAuthenticated]
     serializer_class=FilesListSerializer
     def get(self, request):
-        starred=FileService.get_user_starred_files(request.user)
-        serializer = FilesListSerializer(starred, many=True)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        starred_files=FileService.get_user_starred_files(request.user)
+        if starred_files.exists():
+            serializer = FilesListSerializer(starred_files, many=True)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response(
+            {"message":"No starred files!"},
+            status=status.HTTP_200_OK
+        )
+        
+class CollectionStarredList(APIView):
+    """
+    List all the starred collections for the auth user
+    """
+    permission_classes=[IsAuthenticated]
+    def get(self, request):
+        starred_folders=CollectionService.get_user_starred_collections(request.user)
+        if starred_folders.exists():
+            serializer=CollectionSerializer(starred_folders, many=True)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response(
+            {"message":"No starred collections!"},
+            status=status.HTTP_200_OK
+        )
+    
 
 class FileShareCreateView(APIView):
     permission_classes=[IsAuthenticated]

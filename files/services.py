@@ -278,6 +278,12 @@ class CollectionService:
         return CollectionFile.objects.filter(
             collection=collection
         ).select_related("file")
+        
+    @staticmethod
+    def get_user_starred_collections(user):
+        """Return the starred collection for the auth user"""
+        starred_collections=Collection.objects.filter(user=user, is_starred=True)
+        return starred_collections
 
     @staticmethod
     def remove_file_from_collection(user, collection_id, file_id):
