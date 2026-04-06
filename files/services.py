@@ -142,6 +142,11 @@ class FileService:
         )
         file_obj.is_archive=True
         file_obj.save(update_fields=['is_archive'])
+        
+    @staticmethod
+    def get_user_starred_files(user):
+        starred_files=File.objects.filter(user=user, is_starred=True)
+        return starred_files
 
     @staticmethod
     def get_user_deleted_files(user):
@@ -273,6 +278,12 @@ class CollectionService:
         return CollectionFile.objects.filter(
             collection=collection
         ).select_related("file")
+        
+    @staticmethod
+    def get_user_starred_collections(user):
+        """Return the starred collection for the auth user"""
+        starred_collections=Collection.objects.filter(user=user, is_starred=True)
+        return starred_collections
 
     @staticmethod
     def remove_file_from_collection(user, collection_id, file_id):
