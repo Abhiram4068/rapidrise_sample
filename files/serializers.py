@@ -134,8 +134,8 @@ class FileUpdateSerializer(serializers.ModelSerializer):
     
     
 class CollectionSerializer(serializers.ModelSerializer):
-    total_files = serializers.IntegerField(read_only=True)
-    total_size = serializers.IntegerField(read_only=True)
+    total_files = serializers.SerializerMethodField()
+    total_size = serializers.SerializerMethodField()
 
     created_at = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", read_only=True)
     updated_at = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", read_only=True)
@@ -153,6 +153,12 @@ class CollectionSerializer(serializers.ModelSerializer):
             "total_size",
         ]
         read_only_fields = ["id", "created_at", "updated_at"]
+
+    def get_total_files(self, obj):
+        return obj.get_total_files()
+
+    def get_total_size(self, obj):
+        return obj.get_total_size()
 
 
 class CollectionFileSerializer(serializers.ModelSerializer):

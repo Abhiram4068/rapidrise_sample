@@ -150,11 +150,10 @@ class Collection(models.Model):
         return f"{self.name} ({self.user.email})"
 
 
-    def total_files(self):
-        return self.collection_files.count()  # fixed: count() not Count()
+    def get_total_files(self):
+        return self.collection_files.count()
 
-
-    def total_size(self):
+    def get_total_size(self):
         result = self.collection_files.aggregate(
             total=Sum("file__file_size")
         )

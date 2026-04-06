@@ -429,6 +429,7 @@ class CollectionDetailView(APIView):
         except ValidationError as e:
             return Response({"detail": e.message}, status=status.HTTP_404_NOT_FOUND)
         serializer = CollectionSerializer(collection)
+        print(serializer.data)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     def patch(self, request, collection_id):
