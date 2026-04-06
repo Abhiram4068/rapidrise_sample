@@ -181,7 +181,7 @@ class CollectionService:
     def get_user_collections(user):
         """Return all collections for a user with file count and size annotated."""
         return (
-            Collection.objects.filter(user=user)
+            Collection.objects.filter(user=user).order_by('-created_at')
             .annotate(
                 total_files=Count("collection_files"),
                 total_size=Sum("collection_files__file__file_size"),
