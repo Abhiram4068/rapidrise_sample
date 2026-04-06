@@ -104,6 +104,7 @@ class FilesListSerializer(serializers.ModelSerializer):
             'description',
             'created_at',
             'display_name',
+            'deleted_at',
             'is_deleted',
             'updated_at'
         ]
