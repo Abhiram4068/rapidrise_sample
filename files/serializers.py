@@ -56,11 +56,6 @@ class FileUploadSerialzier(serializers.Serializer):
         ),
         allow_empty=False
     )
-    description = serializers.CharField(
-        required=False,
-        allow_blank=True,
-        allow_null=True
-    )
     
     def validate_files(self, files):
         max_file_size=100*1024*1024
@@ -68,7 +63,7 @@ class FileUploadSerialzier(serializers.Serializer):
         for file in files:
             if file.size>max_file_size:
                 raise serializers.ValidationError(
-                    f"File '{file.name} exceeds maximum size of 100MB"
+                    f"File '{file.name}' exceeds maximum size of 100MB"
                 )
         return files
     
@@ -121,6 +116,7 @@ class FilesListSerializer(serializers.ModelSerializer):
             return f"{size / mb:.2f} MB"
         else:
             return f"{size / gb:.2f} GB"
+
 
 
 class FileUpdateSerializer(serializers.ModelSerializer):

@@ -145,7 +145,7 @@ class FileService:
         
     @staticmethod
     def get_user_starred_files(user):
-        starred_files=File.objects.filter(user=user, is_starred=True)
+        starred_files=File.objects.filter(user=user, is_starred=True, is_deleted=False)
         return starred_files
 
     @staticmethod

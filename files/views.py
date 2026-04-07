@@ -162,9 +162,9 @@ class FileUploadView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         files=serializer.validated_data['files']
-        description = serializer.validated_data.get("description")
+       
         try:
-            uploaded_files=FileService.upload_files(user=request.user, files=files, description=description) 
+            uploaded_files=FileService.upload_files(user=request.user, files=files) 
             return Response(
                 {
                     'message':f'{len(uploaded_files)} files uploaded successfully',
@@ -203,7 +203,7 @@ class FileListView(APIView):
           qs = qs.filter(original_name__icontains=search)
       paginator = self.pagination_class()
       page_qs = paginator.paginate_queryset(qs, request, view=self)
-      serializer = self.serializer_class(page_qs, many=True)
+      serializer = self.serializer_class(page_qs, many=True,  context={'request': request})
       
       return paginator.get_paginated_response(serializer.data)
   
@@ -224,7 +224,7 @@ class FileDetailView(APIView):
             file_id=pk
         )
 
-        serializer = self.serializer_class(file_obj)
+        serializer = self.serializer_class(file_obj, context={'request': request})
 
         return Response(serializer.data, status=status.HTTP_200_OK)
     
