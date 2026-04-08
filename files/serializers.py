@@ -4,6 +4,9 @@ from django.contrib.auth.password_validation import validate_password
 from django.db import models
 from django.utils import timezone
 from datetime import timedelta
+ 
+import logging
+logger = logging.getLogger(__name__)
 
 class RegisterSerializer(serializers.ModelSerializer):
     confirm_password=serializers.CharField(write_only=True, min_length=8)
@@ -59,12 +62,31 @@ class FileUploadSerialzier(serializers.Serializer):
     
     def validate_files(self, files):
         max_file_size=100*1024*1024
+        ALLOWED_CONTENT_TYPES = [
+        'image/jpeg',
+        'image/png',
+        'application/pdf',
+        'text/plain',
+        'application/msword',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    ]
         
         for file in files:
             if file.size>max_file_size:
+                logger.warning(
+                    f"File too large | name={file.name} | size={file.size}"
+                )
                 raise serializers.ValidationError(
                     f"File '{file.name}' exceeds maximum size of 100MB"
                 )
+            if file.content_type not in ALLOWED_CONTENT_TYPES:
+                logger.warning(
+                    f"File type not allowed | name={file.name} | type={file.content_type}"
+                )
+                raise serializers.ValidationError(
+                    f"File '{file.name}' is not allowed"
+                )
+
         return files
     
     def validate(self, data):
@@ -108,6 +130,8 @@ class FilesListSerializer(serializers.ModelSerializer):
         ]
     def get_file_size(self, obj):
         size = obj.file_size or 0 
+        if obj.file_size is None:
+            logger.warning(f"File size is None for file {obj.id}")
         kb = 1024
         mb = 1024 * 1024
         gb = 1024 * 1024 * 1024
