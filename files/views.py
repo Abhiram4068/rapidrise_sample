@@ -334,6 +334,19 @@ class CollectionStarredList(APIView):
         )
     
 
+class RecentView(APIView):
+    """
+    view for retrieving recent files for auth user
+    """
+    def get(self, request):
+        recent_files=FileService.get_recent_files(request.user)
+        if not recent_files.exists():
+            return Response({"message":"No files uploaded yet"}, status=status.HTTP_204_NO_CONTENT)
+        serializer=FilesListSerializer(recent_files, many=True)
+        return Response({
+            "files":serializer.data
+        }, status=status.HTTP_200_OK)
+
 class FileShareCreateView(APIView):
     permission_classes=[IsAuthenticated]
 

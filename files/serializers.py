@@ -88,6 +88,8 @@ class FilesListSerializer(serializers.ModelSerializer):
     created_at = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", read_only=True)
     updated_at = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", read_only=True)
     file_size = serializers.SerializerMethodField()
+    file_url = serializers.SerializerMethodField()
+
     class Meta:
         model=File
         fields=[
@@ -101,7 +103,8 @@ class FilesListSerializer(serializers.ModelSerializer):
             'display_name',
             'deleted_at',
             'is_deleted',
-            'updated_at'
+            'updated_at',
+            'file_url'
         ]
     def get_file_size(self, obj):
         size = obj.file_size or 0 
@@ -116,7 +119,11 @@ class FilesListSerializer(serializers.ModelSerializer):
             return f"{size / mb:.2f} MB"
         else:
             return f"{size / gb:.2f} GB"
-
+    def get_file_url(self, obj):
+        request = self.context.get('request')
+        if obj.file and request:
+            return request.build_absolute_uri(obj.file.url)
+        return None
 
 
 class FileUpdateSerializer(serializers.ModelSerializer):
