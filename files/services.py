@@ -14,6 +14,11 @@ from django.conf import settings
 from django.utils import timezone
 from django.db.models import Sum, Count
 
+
+import logging
+logger = logging.getLogger(__name__)
+
+
 def create_user(validated_data):
     email=validated_data.get('email')
     if User.objects.filter(email=email).exists():
@@ -59,6 +64,7 @@ class FileService:
     @transaction.atomic
     
     def upload_files(user, files:List, description=None):
+        logger.info(f"Starting file processing | user_id={user.id}")
         uploaded_files=[]
         for file_obj in files:
             # checksum=FileService._calculate_checksum(file_obj)
@@ -87,6 +93,9 @@ class FileService:
             #         checksum=checksum
             #     )
             #     is_duplicate=False
+            logger.debug(
+                f"Processing file | name={file_obj.name} | size={file_obj.size}"
+            )
             file_instance=File.objects.create(
                     user=user,
                     file=file_obj,
@@ -96,6 +105,9 @@ class FileService:
                     content_type=file_obj.content_type,
                     checksum=None
                 )
+            logger.info(
+                f"File saved | file_id={file_instance.id} | user_id={user.id}"
+            )
             uploaded_files.append({
                 'id':str(file_instance.id),
                 'name':file_instance.original_name,
@@ -104,6 +116,8 @@ class FileService:
                 "checksum": file_instance.checksum,
                 "created_at": file_instance.created_at
             })
+        logger.info(f"All files processed successfully | count={len(uploaded_files)}")
+
 
         return uploaded_files
 
@@ -170,7 +184,6 @@ class FileService:
         file_obj=File.objects.get(user= user, id=file_id)
         file_obj.is_deleted=False
         file_obj.save(update_fields=['is_deleted'])
-        print(file_obj.is_deleted)
         return file_obj
 
     @staticmethod

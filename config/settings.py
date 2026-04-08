@@ -16,7 +16,7 @@ pymysql.install_as_MySQLdb()
 import os
 from dotenv import load_dotenv
 from pathlib import Path
-
+from pythonjsonlogger import jsonlogger
 
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -183,3 +183,78 @@ EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD")
 DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL")
 
 BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL")
+
+LOGS_DIR = BASE_DIR / "logs"
+os.makedirs(LOGS_DIR, exist_ok=True)
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "standard": {
+            "format": "[%(asctime)s] %(levelname)s [%(name)s:%(lineno)s] %(message)s",
+            "datefmt": "%d/%b/%Y %H:%M:%S"
+        },
+    },
+
+    "handlers": {
+        "general_file": {
+            "class": "logging.FileHandler",
+            "filename": LOGS_DIR / "general.log",
+            "formatter": "standard",
+        },
+        "server_file": {
+            "class": "logging.FileHandler",
+            "filename": LOGS_DIR / "server.log",
+            "formatter": "standard",
+        },
+        "files_file": {
+            "class": "logging.FileHandler",
+            "filename": LOGS_DIR / "files.log",
+            "formatter": "standard",
+        },
+        "collections_file": {
+            "class": "logging.FileHandler",
+            "filename": LOGS_DIR / "collections.log",
+            "formatter": "standard",
+        },
+        "users_file": {
+            "class": "logging.FileHandler",
+            "filename": LOGS_DIR / "users.log",
+            "formatter": "standard",
+        },
+        
+    },
+
+    "loggers": {
+        "": {
+            "handlers": ["general_file"],
+            "level": "INFO",
+        },
+        "django.server": {
+            "handlers": ["server_file"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "files": {
+            "handlers": ["files_file"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "collections": {
+            "handlers": ["collections_file"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "users": {
+            "handlers": ["users_file"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "django.utils.autoreload": {
+            "handlers": ["general_file"],
+            "level": "WARNING",
+            "propagate": False,
+        },
+    },
+}

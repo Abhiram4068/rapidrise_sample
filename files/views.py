@@ -16,6 +16,12 @@ from files.services import (
     )
 from rest_framework.pagination import PageNumberPagination
 
+
+import logging
+logger = logging.getLogger(__name__)
+
+
+
 def _set_auth_cookies(response, access_token, refresh_token=None):
     response.set_cookie(
         key=settings.AUTH_COOKIE_ACCESS,
@@ -59,7 +65,6 @@ class RegisterView(APIView):
     def post(self, request):
         serializer=RegisterSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        print(serializer.validated_data)
         try:
             create_user(serializer.validated_data)
         except ValueError as e:
@@ -147,11 +152,14 @@ class LogoutView(APIView):
         _clear_auth_cookies(response)
         return response
 
-       
+import time
 class FileUploadView(APIView):
     permission_classes=[IsAuthenticated]
     
     def post(self, request):
+        start_time = time.time()
+        logger.info(f"File upload request started | user_id={request.user.id}")
+
         serializer=FileUploadSerialzier(
             data=request.data,
             context={'request':request}
@@ -164,7 +172,12 @@ class FileUploadView(APIView):
         files=serializer.validated_data['files']
        
         try:
+            logger.info(f"{len(files)} files received for upload | user_id={request.user.id}")
             uploaded_files=FileService.upload_files(user=request.user, files=files) 
+            duration = time.time() - start_time
+            logger.info(
+                f"File upload success | user_id={request.user.id} | count={len(uploaded_files)} | duration={duration}"
+            )
             return Response(
                 {
                     'message':f'{len(uploaded_files)} files uploaded successfully',
@@ -173,6 +186,9 @@ class FileUploadView(APIView):
                 status=status.HTTP_201_CREATED
             )
         except Exception as e:
+            logger.error(
+                f"File upload failed | user_id={request.user.id} | error={str(e)}"
+            )
             return Response(
                 {'error':str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -235,7 +251,7 @@ class FileUpdateView(APIView):
         """
         Update file metadata (display_name, description only)
         """
-        print(request.data)
+
         serializer = self.serializer_class(
             data=request.data,
             partial=True
@@ -442,7 +458,6 @@ class CollectionDetailView(APIView):
         except ValidationError as e:
             return Response({"detail": e.message}, status=status.HTTP_404_NOT_FOUND)
         serializer = CollectionSerializer(collection)
-        print(serializer.data)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     def patch(self, request, collection_id):
