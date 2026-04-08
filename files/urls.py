@@ -1,7 +1,7 @@
 from django.urls import path
 from files.views import (
     RegisterView, LoginView, TokenRefreshCookieView, LogoutView, FileUploadView, FileDownloadView, FileListView, FileUpdateView, FileArchiveView,FileDetailView,FileDeleteView, FileShareCreateView, PublicFileAccessView,
-    CollectionListCreateView, CollectionDetailView, CollectionFileView, FileStarredList, CollectionStarredList
+    CollectionListCreateView, CollectionDetailView, CollectionFileView, FileStarredList, CollectionStarredList, RecentView
     )
 """
     app level urls
@@ -23,6 +23,8 @@ urlpatterns=[
     path('files/<uuid:file_id>/file-delete/', FileDeleteView.as_view(), name='file-delete'),
     path('files/<uuid:file_id>/archive/', FileArchiveView.as_view(), name='file-archive'),
     path('files/view-recently-deleted/',FileDeleteView.as_view(), name='view-recently-deleted'),
+
+    path('files/recents/',RecentView.as_view(), name='recent-files' ),
     #starred files and folders-------------------------------------------------------------------
     path('files/starred/', FileStarredList.as_view(), name='starred-files'),
     path('collections/starred/', CollectionStarredList.as_view(), name='starred-files'),
@@ -36,4 +38,5 @@ urlpatterns=[
     #file share and download urls
     path('files/<uuid:file_id>/share/', FileShareCreateView.as_view(), name='share-create'),
     path('files/public/<str:token>/', PublicFileAccessView.as_view(), name='public-file-access'),
+
 ]
