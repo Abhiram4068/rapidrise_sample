@@ -12,7 +12,7 @@ from files.serializers import (
     RegisterSerializer, LoginSerializer, FileUploadSerialzier, FilesListSerializer, FileUpdateSerializer ,FileShareSerializer, FileShareCreateSerializer, PublicFileSerializer,CollectionSerializer, CollectionFileSerializer
     )
 from files.services import (
-    create_user, authenticate_and_generate_token, AuthenticationError ,FileService, FileShareService, ViewFileShareService, CollectionService
+    create_user, authenticate_and_generate_token, AuthenticationError ,FileService, FileShareService, ViewFileShareService, CollectionService, ChunkedUploadService
     )
 from rest_framework.pagination import PageNumberPagination
 
@@ -177,6 +177,76 @@ class FileUploadView(APIView):
                 {'error':str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+from rest_framework.parsers import MultiPartParser
+
+class ChunkStatusView(APIView):
+    permission_classes = [IsAuthenticated]
+    def get(self, request):
+        upload_id = request.query_params.get('upload_id')
+        if not upload_id:
+            return Response({"error": "upload_id is required"}, status=400)
+        chunks = ChunkedUploadService.check_status(request.user, upload_id)
+        return Response({"uploaded_chunks": chunks})
+
+class ChunkUploadView(APIView):
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser]
+
+    def post(self, request):
+        upload_id = request.data.get('upload_id')
+        chunk_index = request.data.get('chunk_index')
+        chunk_file = request.FILES.get('file')
+
+        if not all([upload_id, chunk_index is not None, chunk_file]):
+            return Response({"error": "Missing parameters"}, status=400)
+
+        ChunkedUploadService.upload_chunk(
+            user=request.user, 
+            upload_id=upload_id, 
+            chunk_index=int(chunk_index), 
+            file_obj=chunk_file
+        )
+        return Response({"message": "Chunk uploaded successfully"})
+
+class ChunkCompleteView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        upload_id = request.data.get('upload_id')
+        original_name = request.data.get('original_name')
+        content_type = request.data.get('content_type', 'application/octet-stream')
+        description = request.data.get('description', '')
+
+        if not all([upload_id, original_name]):
+            return Response({"error": "Missing parameters"}, status=400)
+
+        try:
+            uploaded_files = ChunkedUploadService.complete_upload(
+                user=request.user,
+                upload_id=upload_id,
+                original_name=original_name,
+                content_type=content_type,
+                description=description
+            )
+            return Response({
+                'message': 'File assembled successfully',
+                'files': uploaded_files
+            }, status=201)
+        except Exception as e:
+            return Response({"error": str(e)}, status=500)
+
+class ChunkCancelView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request):
+        upload_id = request.data.get('upload_id') or request.query_params.get('upload_id')
+        if not upload_id:
+            return Response({"error": "upload_id is required"}, status=400)
+            
+        ChunkedUploadService.cancel_upload(request.user, upload_id)
+        return Response({"message": "Upload cancelled"}, status=200)
+
 class FileDownloadView(APIView):
     permission_classes=[IsAuthenticated]
     def get(self, request, file_id):

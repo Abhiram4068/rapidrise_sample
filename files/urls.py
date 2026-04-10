@@ -1,7 +1,8 @@
 from django.urls import path
 from files.views import (
     RegisterView, LoginView, TokenRefreshCookieView, LogoutView, FileUploadView, FileDownloadView, FileListView, FileUpdateView, FileArchiveView,FileDetailView,FileDeleteView, FileShareCreateView, PublicFileAccessView,
-    CollectionListCreateView, CollectionDetailView, CollectionFileView
+    CollectionListCreateView, CollectionDetailView, CollectionFileView,
+    ChunkStatusView, ChunkUploadView, ChunkCompleteView, ChunkCancelView
     )
 """
     app level urls
@@ -16,6 +17,10 @@ urlpatterns=[
     path('auth/logout/', LogoutView.as_view(), name='logout'),
     #file download urls
     path('files/', FileUploadView.as_view(), name='file-upload'),
+    path('chunk/status/', ChunkStatusView.as_view(), name='chunk-status'),
+    path('chunk/upload/', ChunkUploadView.as_view(), name='chunk-upload'),
+    path('chunk/complete/', ChunkCompleteView.as_view(), name='chunk-complete'),
+    path('chunk/cancel/', ChunkCancelView.as_view(), name='chunk-cancel'),
     path('<uuid:file_id>/file-download/', FileDownloadView.as_view(), name='file-download'),
     path('file-list/', FileListView.as_view(), name='file-list'),
     path('files/<uuid:pk>/update/', FileUpdateView.as_view(), name='file-update'),

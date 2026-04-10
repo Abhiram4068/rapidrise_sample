@@ -378,4 +378,77 @@ class ViewFileShareService:
             share.accessed_at=timezone.now()
             share.save(update_fields=["accessed", "accessed_at"])
 
+import os
+import shutil
+import tempfile
+from django.core.files import File as DjangoFile
 
+class ChunkedUploadService:
+    """
+    Handles chunking uploads (status, upload, assemble, cancel)
+    """
+    @staticmethod
+    def get_chunk_dir(user_id, upload_id):
+        return os.path.join(settings.MEDIA_ROOT, 'temp_chunks', str(user_id), str(upload_id))
+
+    @staticmethod
+    def check_status(user, upload_id):
+        chunk_dir = ChunkedUploadService.get_chunk_dir(user.id, upload_id)
+        if not os.path.exists(chunk_dir):
+            return []
+        
+        chunks = []
+        for filename in os.listdir(chunk_dir):
+            if filename.isdigit():
+                chunks.append(int(filename))
+        return sorted(chunks)
+
+    @staticmethod
+    def upload_chunk(user, upload_id, chunk_index, file_obj):
+        chunk_dir = ChunkedUploadService.get_chunk_dir(user.id, upload_id)
+        os.makedirs(chunk_dir, exist_ok=True)
+        
+        chunk_path = os.path.join(chunk_dir, str(chunk_index))
+        with open(chunk_path, 'wb+') as destination:
+            for chunk in file_obj.chunks():
+                destination.write(chunk)
+        return True
+
+    @staticmethod
+    def complete_upload(user, upload_id, original_name, content_type, description=None):
+        chunk_dir = ChunkedUploadService.get_chunk_dir(user.id, upload_id)
+        if not os.path.exists(chunk_dir):
+            raise ValidationError("Upload session not found.")
+
+        chunks = sorted([int(f) for f in os.listdir(chunk_dir) if f.isdigit()])
+        if not chunks:
+            raise ValidationError("No chunks uploaded.")
+
+        temp_file = tempfile.NamedTemporaryFile(delete=False)
+        temp_file_path = temp_file.name
+        temp_file.close()
+
+        try:
+            with open(temp_file_path, 'wb') as outfile:
+                for chunk_index in chunks:
+                    chunk_path = os.path.join(chunk_dir, str(chunk_index))
+                    with open(chunk_path, 'rb') as infile:
+                        outfile.write(infile.read())
+
+            with open(temp_file_path, 'rb') as f:
+                django_file = DjangoFile(f, name=original_name)
+                django_file.content_type = content_type
+                
+                # Re-use existing service logic
+                uploaded_files = FileService.upload_files(user, [django_file], description)
+            return uploaded_files
+        finally:
+            shutil.rmtree(chunk_dir, ignore_errors=True)
+            if os.path.exists(temp_file_path):
+                os.remove(temp_file_path)
+
+    @staticmethod
+    def cancel_upload(user, upload_id):
+        chunk_dir = ChunkedUploadService.get_chunk_dir(user.id, upload_id)
+        if os.path.exists(chunk_dir):
+            shutil.rmtree(chunk_dir, ignore_errors=True)
