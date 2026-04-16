@@ -67,44 +67,36 @@ class FileService:
         logger.info(f"Starting file processing | user_id={user.id}")
         uploaded_files=[]
         for file_obj in files:
-            # checksum=FileService._calculate_checksum(file_obj)
+            checksum=FileService._calculate_checksum(file_obj)
             
             
-            # existing_file=File.objects.filter(checksum=checksum).first()
-            # if existing_file:
-            #     file_instance=File.objects.create(
-            #         user=user,
-            #         file=existing_file.file,
-            #         original_name=file_obj.name,
-            #         description=description,
-            #         file_size=file_obj.size,
-            #         content_type=file_obj.content_type,
-            #         checksum=checksum
-            #     )
-            #     is_duplicate=True
-            # else:
-            #     file_instance=File.objects.create(
-            #         user=user,
-            #         file=file_obj,
-            #         original_name=file_obj.name,
-            #         description=description,
-            #         file_size=file_obj.size,
-            #         content_type=file_obj.content_type,
-            #         checksum=checksum
-            #     )
-            #     is_duplicate=False
-            logger.debug(
-                f"Processing file | name={file_obj.name} | size={file_obj.size}"
-            )
-            file_instance=File.objects.create(
+            existing_file=File.objects.filter(checksum=checksum).first()
+            if existing_file:
+                file_instance=File.objects.create(
+                    user=user,
+                    file=existing_file.file,
+                    original_name=file_obj.name,
+                    description=description,
+                    file_size=file_obj.size,
+                    content_type=file_obj.content_type,
+                    checksum=checksum
+                )
+                is_duplicate=True
+            else:
+                file_instance=File.objects.create(
                     user=user,
                     file=file_obj,
                     original_name=file_obj.name,
                     description=description,
                     file_size=file_obj.size,
                     content_type=file_obj.content_type,
-                    checksum=None
+                    checksum=checksum
                 )
+                is_duplicate=False
+            logger.debug(
+                f"Processing file | name={file_obj.name} | size={file_obj.size}"
+            )
+            
             logger.info(
                 f"File saved | file_id={file_instance.id} | user_id={user.id}"
             )
