@@ -41,4 +41,7 @@ urlpatterns=[
     path('files/<uuid:file_id>/share/', FileShareCreateView.as_view(), name='share-create'),
     path('files/public/<str:token>/', PublicFileAccessView.as_view(), name='public-file-access'),
 
+    #file schedule share
+    
+
 ]

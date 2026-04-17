@@ -340,7 +340,8 @@ class CollectionService:
 
         if deleted_count == 0:
             raise ValidationError("File not found in this collection.")  
-    
+
+from .tasks import send_share_email_task 
 class FileShareService:
     """
     service handles the file sharing business logic
@@ -350,17 +351,16 @@ class FileShareService:
         return secrets.token_urlsafe(32)
     @staticmethod
     def create_share_token(file_id, owner, recipient_email, expiration_hours, message):
-        """
-        for creating a file token and returns a fileshare link
-        """
+
         try:
-            file=File.objects.get(id=file_id, user=owner)
+            file = File.objects.get(id=file_id, user=owner)
         except File.DoesNotExist:
-            raise ValueError("File not found or you dont have the permission")
-        share_token=FileShareService.generate_share_token()
+            raise ValueError("File not found or no permission")
+
+        share_token = FileShareService.generate_share_token()
         expiration_datetime = timezone.now() + timedelta(hours=expiration_hours)
 
-        share=FileShareLink.objects.create(
+        share = FileShareLink.objects.create(
             file=file,
             owner=owner,
             recipient_email=recipient_email.lower(),
@@ -368,54 +368,12 @@ class FileShareService:
             expiration_datetime=expiration_datetime
         )
 
-        email_sent=FileShareService.send_share_email(share, message)
-        if not email_sent:
-            print("Error")
+
+        send_share_email_task.delay(share.id, message)
+
         return share
     
-    @staticmethod
-    def send_share_email(share, message):
-        """
-        send email
-        """
-        email_subject = f"{share.owner.email} shared '{share.file.original_name}' with you"
-        share_url = f"{settings.BACKEND_BASE_URL}/api/files/public/{share.share_token}/"
-
-        email_body = f"""
-        Hi,
-
-        {share.owner.email} has shared a file with you.
-
-        File: {share.file.original_name}
-        Size: {share.file.file_size / (1024 * 1024):.2f} MB
-
-        {f'Message from sender: "{message}"' if message else ''}
-
-        Click here to access the file:
-        {share_url}    def post(self, request):
-
-        This link will expire on {share.expiration_datetime.strftime('%B %d, %Y')}.
-
-        ⚠️ IMPORTANT: 
-        - This link is personal and should not be shared with others.
-        - You will need to verify your email address ({share.recipient_email}) to access the file.
-
-        ---
-        If you did not expect this file, please ignore this email.
-                """
-        try:
-            send_mail(
-                subject=email_subject,
-                message=email_body,
-                from_email=settings.DEFAULT_FROM_EMAIL,
-                recipient_list=[share.recipient_email],
-                fail_silently=False
-            )
-            return True
-        except Exception as e:
-            print("Error sending file")
-            return False
-        
+   
 
 class ViewFileShareService:
     @staticmethod
