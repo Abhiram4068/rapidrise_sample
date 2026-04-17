@@ -30,19 +30,35 @@ class UserManager(BaseUserManager):
         if extra_fields.get('is_active') is not True:
             raise ValueError('Super user must have is_active=True')
         return self.create_user(email=email, password=password, **extra_fields)
-    
 class User(AbstractUser):
-    username=None
-    email=models.EmailField(unique=True)
-    date_of_birth=models.DateField(null=True, blank=True)
-    USERNAME_FIELD='email'
-    REQUIRED_FIELDS=['first_name', 'date_of_birth']
-    objects=UserManager()
+
+    class RoleChoices(models.TextChoices):
+        PROJECT_MANAGER   = "project_manager", "Project Manager"
+        TEAM_MANAGER      = "team_manager", "Team Manager"
+        DELIVERY_MANAGER  = "delivery_manager", "Delivery Manager"
+        PRODUCT_MANAGER   = "product_manager", "Product Manager"
+        OPERATIONS_MANAGER= "operations_manager", "Operations Manager"
+
+    username = None
+    email = models.EmailField(unique=True)
+    date_of_birth = models.DateField(null=True, blank=True)
+
+    role = models.CharField(
+        max_length=20,
+        choices=RoleChoices.choices,
+        default=RoleChoices.PROJECT_MANAGER
+    )
+
+    USERNAME_FIELD = 'email'
+    REQUIRED_FIELDS = ['first_name', 'date_of_birth']
+
+    objects = UserManager()
+
     def __str__(self):
         return self.email
+
     class Meta:
         db_table = "auth_users"
-
 
 
 def user_directory_path(instance, filename):

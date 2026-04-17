@@ -1,6 +1,6 @@
 from django.urls import path
 from files.views import (
-    RegisterView, LoginView, TokenRefreshCookieView, LogoutView, FileUploadView, FileDownloadView, FileListView, FileUpdateView, FileArchiveView,FileDetailView,FileDeleteView, FileShareCreateView, PublicFileAccessView,
+    RegisterView, LoginView, TokenRefreshCookieView, LogoutView, UserProfileView, FileUploadView, FileDownloadView, FileListView, FileUpdateView, FileArchiveView,FileDetailView,FileDeleteView, FileShareCreateView, PublicFileAccessView,
     CollectionListCreateView, CollectionDetailView, CollectionFileView, FileStarredList, CollectionStarredList, RecentView
     )
 """
@@ -14,6 +14,8 @@ urlpatterns=[
     path('auth/login/', LoginView.as_view(), name='login'),
     path('token/refresh/', TokenRefreshCookieView.as_view(), name='token-refresh'),
     path('auth/logout/', LogoutView.as_view(), name='logout'),
+    #profile
+    path('profile/', UserProfileView.as_view(), name='user-profile'),
     #file download urls
     path('files/', FileUploadView.as_view(), name='file-upload'),
     path('<uuid:file_id>/file-download/', FileDownloadView.as_view(), name='file-download'),

@@ -53,6 +53,26 @@ def authenticate_and_generate_token(email:str, password:str)->dict:
         }
     }
     
+class UserProfileService:
+    @staticmethod
+    def get_profile(user: User):
+        return (
+            User.objects
+            .filter(pk=user.pk)
+            .annotate(total_files=Count("files"))  # related_name
+            .only("id", "email", "first_name", "last_name", "role")
+            .first()
+        )
+    @staticmethod
+    def update_profile(user: User, data: dict) -> User:
+        updatable_fields = ["first_name", "last_name", "date_of_birth", "role"]
+        
+        for field in updatable_fields:
+            if field in data:
+                setattr(user, field, data[field])
+        
+        user.save(update_fields=updatable_fields)
+        return user
 
 class FileService:
     """
