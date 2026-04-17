@@ -9,10 +9,10 @@ from rest_framework_simplejwt.exceptions import TokenError
 from django.http import FileResponse
 from django.core.exceptions import ValidationError
 from files.serializers import (
-    RegisterSerializer, LoginSerializer, FileUploadSerialzier, FilesListSerializer, FileUpdateSerializer ,FileShareSerializer, FileShareCreateSerializer, PublicFileSerializer,CollectionSerializer, CollectionFileSerializer
+    RegisterSerializer, LoginSerializer, UserProfileSerializer, FileUploadSerialzier, FilesListSerializer, FileUpdateSerializer ,FileShareSerializer, FileShareCreateSerializer, PublicFileSerializer,CollectionSerializer, CollectionFileSerializer
     )
 from files.services import (
-    create_user, authenticate_and_generate_token, AuthenticationError ,FileService, FileShareService, ViewFileShareService, CollectionService
+    create_user, authenticate_and_generate_token, AuthenticationError ,UserProfileService, FileService, FileShareService, ViewFileShareService, CollectionService
     )
 from rest_framework.pagination import PageNumberPagination
 
@@ -151,6 +151,20 @@ class LogoutView(APIView):
         response = Response({"message": "Logged out"}, status=status.HTTP_200_OK)
         _clear_auth_cookies(response)
         return response
+
+class UserProfileView(APIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = UserProfileSerializer
+
+    def get(self, request) -> Response:
+        user = UserProfileService.get_profile(user=request.user)
+        serializer = self.serializer_class(user, context={"request": request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def patch(self, request) -> Response:
+        user = UserProfileService.update_profile(user=request.user, data=request.data)
+        serializer = self.serializer_class(user, context={"request": request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 import time
 class FileUploadView(APIView):

@@ -50,6 +50,18 @@ class LoginSerializer(serializers.Serializer):
     """
     file upload serializers
     """
+
+class UserProfileSerializer(serializers.ModelSerializer):
+    date_joined = serializers.SerializerMethodField()
+    total_files = serializers.IntegerField(read_only=True)
+
+    class Meta:
+        model = User
+        fields = ["id", "email", "first_name", "last_name", "role", "date_joined", "total_files"]
+        read_only_fields = fields
+
+    def get_date_joined(self, obj):
+        return obj.date_joined.strftime("%B %d %Y")
       
 class FileUploadSerialzier(serializers.Serializer):
     files=serializers.ListField(
