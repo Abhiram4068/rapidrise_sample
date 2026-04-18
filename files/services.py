@@ -1,5 +1,5 @@
 from django.contrib.auth import get_user_model
-from .models import User, File, FileShareLink, Collection, CollectionFile
+from .models import User, File, FileShareLink, Collection, CollectionFile, ScheduledMail
 from django.db import transaction, IntegrityError
 from rest_framework_simplejwt.tokens import RefreshToken
 import hashlib
@@ -349,7 +349,7 @@ class FileShareService:
     def generate_share_token():
         return secrets.token_urlsafe(32)
     @staticmethod
-    def create_share_token(file_id, owner, recipient_email, expiration_hours, message):
+    def create_share_token(file_id, owner, recipient_email, expiration_hours, message, schedule_at=None):
         """
         for creating a file token and returns a fileshare link
         """
@@ -368,9 +368,24 @@ class FileShareService:
             expiration_datetime=expiration_datetime
         )
 
-        email_sent=FileShareService.send_share_email(share, message)
-        if not email_sent:
-            print("Error")
+        if schedule_at:
+            scheduled_mail = ScheduledMail.objects.create(
+                share=share,
+                message=message,
+                scheduled_for=schedule_at,
+            )
+            from .tasks import send_scheduled_share_email
+
+            task_result = send_scheduled_share_email.apply_async(
+                args=[str(scheduled_mail.id)],
+                eta=schedule_at,
+            )
+            scheduled_mail.task_id = task_result.id
+            scheduled_mail.save(update_fields=["task_id"])
+        else:
+            email_sent = FileShareService.send_share_email(share, message)
+            if not email_sent:
+                logger.error("Immediate file share email failed | share_id=%s", share.id)
         return share
     
     @staticmethod
@@ -392,11 +407,11 @@ class FileShareService:
         {f'Message from sender: "{message}"' if message else ''}
 
         Click here to access the file:
-        {share_url}    def post(self, request):
+        {share_url}
 
         This link will expire on {share.expiration_datetime.strftime('%B %d, %Y')}.
 
-        ⚠️ IMPORTANT: 
+        IMPORTANT:
         - This link is personal and should not be shared with others.
         - You will need to verify your email address ({share.recipient_email}) to access the file.
 
@@ -413,7 +428,7 @@ class FileShareService:
             )
             return True
         except Exception as e:
-            print("Error sending file")
+            logger.error("Error sending file share email | share_id=%s | error=%s", share.id, str(e))
             return False
         
 

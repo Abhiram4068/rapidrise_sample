@@ -1,7 +1,7 @@
 from django.urls import path
 from files.views import (
     RegisterView, LoginView, TokenRefreshCookieView, LogoutView, UserProfileView, FileUploadView, FileDownloadView, FileListView, FileUpdateView, FileArchiveView,FileDetailView,FileDeleteView, FileShareCreateView, PublicFileAccessView,
-    CollectionListCreateView, CollectionDetailView, CollectionFileView, FileStarredList, CollectionStarredList, RecentView
+    CollectionListCreateView, CollectionDetailView, CollectionFileView, FileStarredList, CollectionStarredList, RecentView, FileShareScheduleCreateView
     )
 """
     app level urls
@@ -39,6 +39,7 @@ urlpatterns=[
     path("collections/<uuid:collection_id>/files/<uuid:file_id>/", CollectionFileView.as_view()),
     #file share and download urls
     path('files/<uuid:file_id>/share/', FileShareCreateView.as_view(), name='share-create'),
+    path('files/<uuid:file_id>/share/schedule/', FileShareScheduleCreateView.as_view(), name='share-schedule'),
     path('files/public/<str:token>/', PublicFileAccessView.as_view(), name='public-file-access'),
 
 ]

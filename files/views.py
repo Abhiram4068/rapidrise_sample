@@ -378,7 +378,7 @@ class RecentView(APIView):
         }, status=status.HTTP_200_OK)
 
 class FileShareCreateView(APIView):
-    permission_classes=[IsAuthenticated]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request, file_id):
         serializer=FileShareCreateSerializer(data=request.data, context={'request': request}
@@ -389,7 +389,10 @@ class FileShareCreateView(APIView):
                                                           owner=request.user,
                                                           recipient_email=serializer.validated_data['recipient_email'],
                                                           expiration_hours=serializer.validated_data['expiration_datetime'],
-                                                          message=serializer.validated_data.get('message', '')
+                                                          message=serializer.validated_data.get('message', ''),
+                                                        schedule_at=serializer.validated_data.get('schedule_at')  
+
+                                            
                                                           )
                 response_serializer=FileShareSerializer(share, context={'request': request}
 )
@@ -402,12 +405,52 @@ class FileShareCreateView(APIView):
             except ValueError as e:
                 return Response(
                     {'error':str(e)},
-                    status=status.HTTP_404_OT_FOUND
+                    status=status.HTTP_404_NOT_FOUND
                 )
-        return Response(serializer.errors, status=400)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class FileShareScheduleCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, file_id):
+        serializer = FileShareCreateSerializer(
+            data=request.data, context={'request': request}
+        )
+        if serializer.is_valid():
+            schedule_at = serializer.validated_data.get('schedule_at')
+            if not schedule_at:
+                return Response(
+                    {"schedule_at": ["This field is required for scheduled share."]},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            try:
+                share = FileShareService.create_share_token(
+                    file_id=file_id,
+                    owner=request.user,
+                    recipient_email=serializer.validated_data['recipient_email'],
+                    expiration_hours=serializer.validated_data['expiration_datetime'],
+                    message=serializer.validated_data.get('message', ''),
+                    schedule_at=schedule_at
+                )
+                response_serializer = FileShareSerializer(share, context={'request': request})
+                return Response(
+                    {
+                        'message': 'Email scheduled successfully',
+                        'data': response_serializer.data
+                    },
+                    status=status.HTTP_201_CREATED
+                )
+            except ValueError as e:
+                return Response(
+                    {'error': str(e)},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
 
 class PublicFileAccessView(APIView):
+    authentication_classes=[]
     permission_classes=[]
 
     def get(self, request, token):
@@ -418,6 +461,14 @@ class PublicFileAccessView(APIView):
             return Response({'error':str(error_message)}, status=status_code)
         
         share=serializer.share
+        if share.accessed:
+                return Response(
+                    {
+                        'error': 'File has already been accessed',
+                        'message': 'This shared link can only be accessed once for security reasons.'
+                    },
+                    status=status.HTTP_403_FORBIDDEN
+                )
 
         ViewFileShareService.mark_as_accessed(share)
 
