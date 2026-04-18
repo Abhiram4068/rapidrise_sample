@@ -349,7 +349,7 @@ class FileShareService:
     def generate_share_token():
         return secrets.token_urlsafe(32)
     @staticmethod
-    def create_share_token(file_id, owner, recipient_email, expiration_hours, message, schedule_at=None):
+    def create_share_token(file_id, owner, recipient_email, expiration_hours, title, message, schedule_at=None):
         """
         for creating a file token and returns a fileshare link
         """
@@ -383,18 +383,24 @@ class FileShareService:
             scheduled_mail.task_id = task_result.id
             scheduled_mail.save(update_fields=["task_id"])
         else:
-            email_sent = FileShareService.send_share_email(share, message)
-            if not email_sent:
-                logger.error("Immediate file share email failed | share_id=%s", share.id)
+            #used python threads for async email send
+            import threading
+            threading.Thread(
+                target=FileShareService.send_share_email, 
+                args=(share, message, title)
+            ).start()
         return share
     
     @staticmethod
-    def send_share_email(share, message):
+    def send_share_email(share, message, title=None):
         """
         send email
         """
         email_subject = f"{share.owner.email} shared '{share.file.original_name}' with you"
         share_url = f"{settings.BACKEND_BASE_URL}/api/files/public/{share.share_token}/"
+
+        title_display = f"\n        Title: {title}" if title else ""
+        message_display = f"\n        Message from sender: \"{message}\"" if message else ""
 
         email_body = f"""
         Hi,
@@ -402,9 +408,7 @@ class FileShareService:
         {share.owner.email} has shared a file with you.
 
         File: {share.file.original_name}
-        Size: {share.file.file_size / (1024 * 1024):.2f} MB
-
-        {f'Message from sender: "{message}"' if message else ''}
+        Size: {share.file.file_size / (1024 * 1024):.2f} MB{title_display}{message_display}
 
         Click here to access the file:
         {share_url}

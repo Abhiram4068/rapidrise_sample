@@ -385,19 +385,20 @@ class FileShareCreateView(APIView):
 )
         if serializer.is_valid():
             try:
-                share=FileShareService.create_share_token(file_id=file_id,
-                                                          owner=request.user,
-                                                          recipient_email=serializer.validated_data['recipient_email'],
-                                                          expiration_hours=serializer.validated_data['expiration_datetime'],
-                                                          message=serializer.validated_data.get('message', ''),
-                                                        schedule_at=serializer.validated_data.get('schedule_at')  
-
-                                            
-                                                          )
-                response_serializer=FileShareSerializer(share, context={'request': request}
-)
+                shares = []
+                for email in serializer.validated_data['recipient_emails']:
+                    share=FileShareService.create_share_token(file_id=file_id,
+                                                              owner=request.user,
+                                                              recipient_email=email,
+                                                              expiration_hours=serializer.validated_data['expiration_datetime'],
+                                                              title=serializer.validated_data.get('title', ''),
+                                                              message=serializer.validated_data.get('message', ''),
+                                                              schedule_at=serializer.validated_data.get('schedule_at')  
+                                                              )
+                    shares.append(share)
+                response_serializer=FileShareSerializer(shares, many=True, context={'request': request})
                 return Response(
-                    {'message':'File shared successfully',
+                    {'message':f'File shared successfully with {len(shares)} recipient(s)',
                     'data':response_serializer.data
                     },
                     status=status.HTTP_201_CREATED
@@ -425,18 +426,22 @@ class FileShareScheduleCreateView(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             try:
-                share = FileShareService.create_share_token(
-                    file_id=file_id,
-                    owner=request.user,
-                    recipient_email=serializer.validated_data['recipient_email'],
-                    expiration_hours=serializer.validated_data['expiration_datetime'],
-                    message=serializer.validated_data.get('message', ''),
-                    schedule_at=schedule_at
-                )
-                response_serializer = FileShareSerializer(share, context={'request': request})
+                shares = []
+                for email in serializer.validated_data['recipient_emails']:
+                    share = FileShareService.create_share_token(
+                        file_id=file_id,
+                        owner=request.user,
+                        recipient_email=email,
+                        expiration_hours=serializer.validated_data['expiration_datetime'],
+                        title=serializer.validated_data.get('title', ''),
+                        message=serializer.validated_data.get('message', ''),
+                        schedule_at=schedule_at
+                    )
+                    shares.append(share)
+                response_serializer = FileShareSerializer(shares, many=True, context={'request': request})
                 return Response(
                     {
-                        'message': 'Email scheduled successfully',
+                        'message': f'Email scheduled successfully for {len(shares)} recipient(s)',
                         'data': response_serializer.data
                     },
                     status=status.HTTP_201_CREATED

@@ -220,8 +220,12 @@ class CollectionFileSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "added_at"]
 
 class FileShareCreateSerializer(serializers.Serializer):
-    recipient_email=serializers.EmailField()
+    recipient_emails=serializers.ListField(
+        child=serializers.EmailField(),
+        allow_empty=False
+    )
     expiration_datetime=serializers.IntegerField(min_value=1, max_value=168)
+    title=serializers.CharField(max_length=500, required=False, allow_blank=True)
     message=serializers.CharField(max_length=500, required=False, allow_blank=True)
     schedule_at = serializers.DateTimeField(required=False)
 

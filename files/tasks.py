@@ -34,3 +34,6 @@ def send_scheduled_share_email(self, scheduled_mail_id):
     scheduled_mail.sent_at = timezone.now()
     scheduled_mail.error_message = ""
     scheduled_mail.save(update_fields=["status", "sent_at", "error_message"])
+
+
+
