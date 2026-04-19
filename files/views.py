@@ -457,7 +457,7 @@ class FileShareScheduleCreateView(APIView):
 class RevokeScheduledMailView(APIView):
     permission_classes = [IsAuthenticated]
 
-    def post(self, request, mail_id):
+    def post(self, request, mail_id):   
         try:
             FileShareService.revoke_scheduled_mail(request.user, mail_id)
             

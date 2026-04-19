@@ -371,6 +371,7 @@ class FileShareService:
         if schedule_at:
             scheduled_mail = ScheduledMail.objects.create(
                 share=share,
+                title=title,
                 message=message,
                 scheduled_for=schedule_at,
             )

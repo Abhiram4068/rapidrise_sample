@@ -152,6 +152,7 @@ class ScheduledMail(models.Model):
         on_delete=models.CASCADE,
         related_name="scheduled_mails",
     )
+    title = models.TextField(blank=True, default="")
     message = models.TextField(blank=True, default="")
     scheduled_for = models.DateTimeField(db_index=True)
     status = models.CharField(
