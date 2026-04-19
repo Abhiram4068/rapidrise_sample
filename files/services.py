@@ -434,6 +434,28 @@ class FileShareService:
         except Exception as e:
             logger.error("Error sending file share email | share_id=%s | error=%s", share.id, str(e))
             return False
+
+    @staticmethod
+    def revoke_scheduled_mail(user, mail_id):
+        try:
+            scheduled_mail = ScheduledMail.objects.get(id=mail_id, share__owner=user)
+        except ScheduledMail.DoesNotExist:
+            raise ValueError("Scheduled email not found or you don't have permission.")
+            
+        if scheduled_mail.status != ScheduledMail.Status.PENDING:
+            raise ValueError("Only pending scheduled emails can be revoked.")
+            
+        if timezone.now() >= scheduled_mail.scheduled_for:
+            raise ValueError("Time has already reached for this scheduled email.")
+            
+        scheduled_mail.status = ScheduledMail.Status.CANCELLED
+        scheduled_mail.save(update_fields=["status"])
+        
+        if scheduled_mail.task_id:
+            from celery.result import AsyncResult
+            AsyncResult(scheduled_mail.task_id).revoke()
+            
+        return scheduled_mail
         
 
 class ViewFileShareService:

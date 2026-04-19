@@ -10,7 +10,7 @@ def send_scheduled_share_email(self, scheduled_mail_id):
         id=scheduled_mail_id
     )
 
-    if scheduled_mail.status == ScheduledMail.Status.SENT:
+    if scheduled_mail.status != ScheduledMail.Status.PENDING:
         return
 
     from .services import FileShareService

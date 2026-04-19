@@ -454,6 +454,24 @@ class FileShareScheduleCreateView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
 
+class RevokeScheduledMailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, mail_id):
+        try:
+            FileShareService.revoke_scheduled_mail(request.user, mail_id)
+            
+            return Response(
+                {"message": "Scheduled email revoked successfully"},
+                status=status.HTTP_200_OK
+            )
+        except ValueError as e:
+            return Response(
+                {"error": str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+
 class PublicFileAccessView(APIView):
     authentication_classes=[]
     permission_classes=[]

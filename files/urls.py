@@ -1,7 +1,7 @@
 from django.urls import path
 from files.views import (
     RegisterView, LoginView, TokenRefreshCookieView, LogoutView, UserProfileView, FileUploadView, FileDownloadView, FileListView, FileUpdateView, FileArchiveView,FileDetailView,FileDeleteView, FileShareCreateView, PublicFileAccessView,
-    CollectionListCreateView, CollectionDetailView, CollectionFileView, FileStarredList, CollectionStarredList, RecentView, FileShareScheduleCreateView
+    CollectionListCreateView, CollectionDetailView, CollectionFileView, FileStarredList, CollectionStarredList, RecentView, FileShareScheduleCreateView, RevokeScheduledMailView
     )
 """
     app level urls
@@ -40,6 +40,7 @@ urlpatterns=[
     #file share and download urls
     path('files/<uuid:file_id>/share/', FileShareCreateView.as_view(), name='share-create'),
     path('files/<uuid:file_id>/share/schedule/', FileShareScheduleCreateView.as_view(), name='share-schedule'),
+    path('scheduled-mails/<uuid:mail_id>/revoke/', RevokeScheduledMailView.as_view(), name='revoke-scheduled-mail'),
     path('files/public/<str:token>/', PublicFileAccessView.as_view(), name='public-file-access'),
 
 ]
