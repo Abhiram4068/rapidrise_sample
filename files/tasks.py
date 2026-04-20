@@ -18,7 +18,7 @@ def send_scheduled_share_email(self, scheduled_mail_id):
     try:
         email_sent = FileShareService.send_share_email(
             share=scheduled_mail.share,
-            titl=scheduled_mail.title,
+            title=scheduled_mail.title,
             message=scheduled_mail.message,
         )
         if not email_sent:
