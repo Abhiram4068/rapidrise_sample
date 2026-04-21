@@ -10,6 +10,7 @@ from django.http import FileResponse
 from django.core.exceptions import ValidationError
 from files.serializers import (
     RegisterSerializer, LoginSerializer, UserProfileSerializer, FileUploadSerialzier, FilesListSerializer, FileUpdateSerializer ,FileShareSerializer, FileShareCreateSerializer, PublicFileSerializer,CollectionSerializer, CollectionFileSerializer
+    ,ScheduledMailSerializer
     )
 from files.services import (
     create_user, authenticate_and_generate_token, AuthenticationError ,UserProfileService, FileService, FileShareService, ViewFileShareService, CollectionService
@@ -411,7 +412,7 @@ class FileShareCreateView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
-class FileShareScheduleCreateView(APIView):
+class FileShareScheduleCreateListView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, file_id):
@@ -452,7 +453,29 @@ class FileShareScheduleCreateView(APIView):
                     status=status.HTTP_404_NOT_FOUND
                 )
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    
+
+    def get(self, request):
+        result = FileShareService.get_scheduled_mails(request.user)
+        
+        if not result["mails"].exists():
+            return Response(
+                {"message": "No scheduled mails"},
+                status=status.HTTP_204_NO_CONTENT
+            )
+        
+        serializer = ScheduledMailSerializer(
+            result["mails"], many=True, context={'request': request}
+        )
+        return Response(
+            {
+                "total": result["total"],
+                "pending": result["pending"],
+                "completed": result["completed"],
+                "data": serializer.data
+            },
+            status=status.HTTP_200_OK
+        )
+        
 
 class RevokeScheduledMailView(APIView):
     permission_classes = [IsAuthenticated]

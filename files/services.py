@@ -457,6 +457,20 @@ class FileShareService:
             AsyncResult(scheduled_mail.task_id).revoke()
             
         return scheduled_mail
+
+    @staticmethod
+    def get_scheduled_mails(user):
+        queryset = ScheduledMail.objects.filter(
+            share__owner=user
+        ).select_related('share', 'share__file', 'share__owner')
+        
+        return {
+            "total": queryset.count(),
+            "pending": queryset.filter(status=ScheduledMail.Status.PENDING).count(),
+            "completed": queryset.filter(status=ScheduledMail.Status.SENT).count(),
+            "mails": queryset
+        }
+
         
 
 class ViewFileShareService:

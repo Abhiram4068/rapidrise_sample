@@ -1,4 +1,4 @@
-from .models import User, File, FileShareLink, Collection, CollectionFile
+from .models import User, File, FileShareLink, Collection, CollectionFile, ScheduledMail
 from rest_framework import serializers
 from django.contrib.auth.password_validation import validate_password
 from django.db import models
@@ -249,6 +249,34 @@ class FileShareCreateSerializer(serializers.Serializer):
             raise serializers.ValidationError("Schedule time must be in the future.")
         return value
     
+
+class ScheduledMailSerializer(serializers.ModelSerializer):
+    # FileShareLink fields via the 'share' FK
+    file_name = serializers.CharField(source='share.file.original_name', read_only=True)
+    file_size = serializers.IntegerField(source='share.file.file_size', read_only=True)
+    owner_email = serializers.EmailField(source='share.owner.email', read_only=True)
+    recipient_email = serializers.EmailField(source='share.recipient_email', read_only=True)
+    share_token = serializers.CharField(source='share.share_token', read_only=True)
+    is_share_active = serializers.BooleanField(source='share.is_active', read_only=True)
+    share_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ScheduledMail
+        fields = [
+            'id', 'file_name', 'file_size', 'owner_email', 'recipient_email',
+            'title', 'message', 'scheduled_for', 'status',
+            'sent_at', 'error_message', 'created_at',
+            'share_token', 'is_share_active', 'share_url'
+        ]
+        read_only_fields = ['id', 'status', 'sent_at', 'error_message', 'created_at']
+
+    def get_share_url(self, obj):
+        request = self.context.get('request')
+        token = obj.share.share_token
+        if request:
+            return request.build_absolute_uri(f'/api/files/public/{token}/')
+        return f'/api/files/public/{token}/'
+
 class FileShareSerializer(serializers.ModelSerializer):
     """
     serializer for viewing the shared files
