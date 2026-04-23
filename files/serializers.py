@@ -248,6 +248,54 @@ class FileShareCreateSerializer(serializers.Serializer):
         if value <= timezone.now():
             raise serializers.ValidationError("Schedule time must be in the future.")
         return value
+
+class FileShareListSerializer(serializers.ModelSerializer):
+    file_name=serializers.CharField(source='file.original_name', read_only=True)
+    file_size=serializers.IntegerField(source='file.file_size', read_only=True)
+    owner_email = serializers.EmailField(source='owner.email', read_only=True)
+    recipient_email = serializers.EmailField(read_only=True)
+    created_at = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", read_only=True)
+    expiration_datetime = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", read_only=True)
+    accessed_at = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", read_only=True)
+    is_active = serializers.SerializerMethodField()
+    share_url = serializers.SerializerMethodField()
+    status = serializers.SerializerMethodField()
+    content_type = serializers.CharField(source='file.content_type', read_only=True)
+    file_id = serializers.UUIDField(source='file.id', read_only=True)
+    class Meta:
+        model = FileShareLink
+        fields = [
+            'id', 'file_name', 'file_size', 'owner_email', 
+            'recipient_email', 'created_at', 'expiration_datetime',
+            'accessed_at', 'is_active', 'share_url', 'status', 'content_type', 'revoked_at',
+            'file_id'
+        ]
+    def get_is_active(self, obj):
+        return obj.is_active
+    def get_share_url(self, obj):
+        request = self.context.get('request')
+        if request:
+            return request.build_absolute_uri(f'/api/files/public/{obj.share_token}/')
+        return f'/api/files/public/{obj.share_token}/'
+    def get_status(self, obj):
+        now = timezone.now()
+
+        if obj.accessed_at and obj.is_active:
+            return "Accessed"
+
+        if obj.expiration_datetime and now > obj.expiration_datetime:
+            return "Expired"
+
+        if not obj.is_active and obj.revoked_at:
+            return "Revoked"
+
+        return "Active"     
+
+    def get_content_type(self, obj):
+        return obj.file.content_type
+
+    def get_file_id(self, obj):
+        return obj.file.id
     
 
 class ScheduledMailSerializer(serializers.ModelSerializer):

@@ -10,7 +10,7 @@ from django.http import FileResponse
 from django.core.exceptions import ValidationError
 from files.serializers import (
     RegisterSerializer, LoginSerializer, UserProfileSerializer, FileUploadSerialzier, FilesListSerializer, FileUpdateSerializer ,FileShareSerializer, FileShareCreateSerializer, PublicFileSerializer,CollectionSerializer, CollectionFileSerializer
-    ,ScheduledMailSerializer
+    ,ScheduledMailSerializer, FileShareListSerializer
     )
 from files.services import (
     create_user, authenticate_and_generate_token, AuthenticationError ,UserProfileService, FileService, FileShareService, ViewFileShareService, CollectionService
@@ -378,7 +378,7 @@ class RecentView(APIView):
             "files":serializer.data
         }, status=status.HTTP_200_OK)
 
-class FileShareCreateView(APIView):
+class FileShareCreateListUpdateView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, file_id):
@@ -411,6 +411,39 @@ class FileShareCreateView(APIView):
                 )
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+    def get(self, request):
+        shares=FileShareService.get_user_shares(request.user)
+        total_mails_send = shares.count()
+
+        page=int(request.query_params.get('page', 1))
+        page_size=int(request.query_params.get('page_size',10))
+        start=(page-1)*page_size
+        end=start+page_size
+        paginated_shares = shares[start:end]    
+        serializer=FileShareListSerializer(paginated_shares, many=True, context={'request': request})
+        return Response({
+            "current_page": page,
+            "total_pages": (total_mails_send + page_size - 1),
+            "total_mails_send": total_mails_send,
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
+        
+        
+    def put(self, request, share_id):
+        """
+        view for revoking the shared files
+        """
+        try:
+            FileShareService.revoke_share(file_share_id=share_id, owner=request.user)
+            return Response(
+                {'message':'File revoked successfully'},
+                status=status.HTTP_200_OK
+            )
+        except ValueError as e:
+            return Response(
+                {'error':str(e)},
+                status=status.HTTP_404_NOT_FOUND
+            )
 
 class FileShareScheduleCreateListView(APIView):
     permission_classes = [IsAuthenticated]

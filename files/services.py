@@ -436,6 +436,23 @@ class FileShareService:
             logger.error("Error sending file share email | share_id=%s | error=%s", share.id, str(e))
             return False
 
+
+    @staticmethod
+    def get_user_shares(user):
+        shares=FileShareLink.objects.filter(owner=user)
+        return shares
+
+    @staticmethod
+    def revoke_share(file_share_id, owner):
+        try:
+            file_share=FileShareLink.objects.get(id=file_share_id, owner=owner, accessed=False)
+        except FileShareLink.DoesNotExist:
+            raise ValueError("You haven't made this share or you don't have the permission")
+        file_share.revoked_at=timezone.now()
+        file_share.is_active=False
+        file_share.save(update_fields=["revoked_at", "is_active"])
+        return True
+
     @staticmethod
     def revoke_scheduled_mail(user, mail_id):
         try:
