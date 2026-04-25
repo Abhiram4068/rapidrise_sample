@@ -205,7 +205,7 @@ class CollectionFileSerializer(serializers.ModelSerializer):
     file_name = serializers.CharField(source="file.original_name", read_only=True)
     file_size = serializers.IntegerField(source="file.file_size", read_only=True)
     content_type = serializers.CharField(source="file.content_type", read_only=True)
-    
+    display_name=serializers.CharField(source="file.display_name", read_only=True)
     added_at = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", read_only=True)
 
     class Meta:
@@ -215,9 +215,11 @@ class CollectionFileSerializer(serializers.ModelSerializer):
             "file_name",
             "file_size",
             "content_type",
+            "display_name",
             "added_at",
+            "file"
         ]
-        read_only_fields = ["id", "added_at"]
+        read_only_fields = ["id", "added_at", "file"]
 
 class FileShareCreateSerializer(serializers.Serializer):
     recipient_email=serializers.EmailField()

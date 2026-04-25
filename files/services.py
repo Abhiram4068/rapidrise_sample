@@ -317,7 +317,8 @@ class CollectionService:
             raise ValidationError("Collection not found.")
         
         return CollectionFile.objects.filter(
-            collection=collection
+            collection=collection,
+            file__is_deleted=False
         ).select_related("file")
         
     @staticmethod
