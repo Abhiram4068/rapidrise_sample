@@ -216,8 +216,9 @@ class CollectionFileSerializer(serializers.ModelSerializer):
             "file_size",
             "content_type",
             "added_at",
+            "file"
         ]
-        read_only_fields = ["id", "added_at"]
+        read_only_fields = ["id", "added_at", "file"]
 
 class FileShareCreateSerializer(serializers.Serializer):
     recipient_emails=serializers.ListField(
