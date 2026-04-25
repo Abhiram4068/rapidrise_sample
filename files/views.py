@@ -566,6 +566,20 @@ class CollectionListCreateView(APIView):
     def get(self, request):
 
         collections = CollectionService.get_user_collections(request.user)
+        search = request.query_params.get('search', '').strip()
+
+        if search:
+            collections = collections.filter(name__icontains=search)
+        sort_by = request.query_params.get('sort_by', 'created_at')
+        sort_order = request.query_params.get('sort_order', 'desc')
+        allowed_sort_fields = ['created_at', 'name', 'total_size', 'total_files']
+        if sort_by not in allowed_sort_fields:
+            sort_by = 'created_at'
+
+        if sort_order == 'asc':
+            collections = collections.order_by(sort_by)
+        else:
+            collections = collections.order_by(f'-{sort_by}')
         total_collections=collections.count()
         serializer = CollectionSerializer(collections, many=True)
         return Response(
@@ -628,24 +642,23 @@ class CollectionDetailView(APIView):
 
 class CollectionFileView(APIView):
     permission_classes = [IsAuthenticated]
+    serializer_class = CollectionFileSerializer
+    pagination_class = DefaultPageNumberPagination
     
     def get(self, request, collection_id):
         """List all files inside a collection."""
         try:
             collection_files = CollectionService.get_collection_files(request.user, collection_id)
-            total_files=collection_files.count()
         except ValidationError as e:
             return Response({"detail": e.message}, status=status.HTTP_404_NOT_FOUND)
+        search = request.query_params.get('search', '').strip()
+        if search:
+            collection_files = collection_files.filter(file__original_name__icontains=search)
+        paginator = self.pagination_class()
+        page_qs = paginator.paginate_queryset(collection_files, request, view=self)
+        serializer = self.serializer_class(page_qs, many=True, context={'request': request})
         
-        serializer = CollectionFileSerializer(collection_files, many=True)
-        
-        return Response(
-           {"collection_files": serializer.data,
-            "count":total_files
-            },
-           
-            status=status.HTTP_200_OK
-            )
+        return paginator.get_paginated_response(serializer.data)
 
     def post(self, request, collection_id, file_id):
         """Add a file to a collection."""
