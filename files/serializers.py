@@ -1,4 +1,4 @@
-from .models import User, File, FileShareLink, Collection, CollectionFile
+from .models import User, File, FileShareLink, Collection, CollectionFile, ScheduledMail
 from rest_framework import serializers
 from django.contrib.auth.password_validation import validate_password
 from django.db import models
@@ -216,13 +216,19 @@ class CollectionFileSerializer(serializers.ModelSerializer):
             "file_size",
             "content_type",
             "added_at",
+            "file"
         ]
-        read_only_fields = ["id", "added_at"]
+        read_only_fields = ["id", "added_at", "file"]
 
 class FileShareCreateSerializer(serializers.Serializer):
-    recipient_email=serializers.EmailField()
+    recipient_emails=serializers.ListField(
+        child=serializers.EmailField(),
+        allow_empty=False
+    )
     expiration_datetime=serializers.IntegerField(min_value=1, max_value=168)
+    title=serializers.CharField(max_length=500, required=False, allow_blank=True)
     message=serializers.CharField(max_length=500, required=False, allow_blank=True)
+    schedule_at = serializers.DateTimeField(required=False)
 
     def validate_file_id(self, value):
         request=self.context.get('request')
@@ -238,12 +244,93 @@ class FileShareCreateSerializer(serializers.Serializer):
         if value > 168:
             raise serializers.ValidationError("Maximum expiration time for the link is 168hrs(7 days)")
         return value
+
+    def validate_schedule_at(self, value):
+        if value <= timezone.now():
+            raise serializers.ValidationError("Schedule time must be in the future.")
+        return value
+
+class FileShareListSerializer(serializers.ModelSerializer):
+    file_name=serializers.CharField(source='file.original_name', read_only=True)
+    file_size=serializers.IntegerField(source='file.file_size', read_only=True)
+    owner_email = serializers.EmailField(source='owner.email', read_only=True)
+    recipient_email = serializers.EmailField(read_only=True)
+    created_at = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", read_only=True)
+    expiration_datetime = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", read_only=True)
+    accessed_at = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", read_only=True)
+    is_active = serializers.SerializerMethodField()
+    share_url = serializers.SerializerMethodField()
+    status = serializers.SerializerMethodField()
+    content_type = serializers.CharField(source='file.content_type', read_only=True)
+    file_id = serializers.UUIDField(source='file.id', read_only=True)
+    class Meta:
+        model = FileShareLink
+        fields = [
+            'id', 'file_name', 'file_size', 'owner_email', 
+            'recipient_email', 'created_at', 'expiration_datetime',
+            'accessed_at', 'is_active', 'share_url', 'status', 'content_type', 'revoked_at',
+            'file_id'
+        ]
+    def get_is_active(self, obj):
+        return obj.is_active
+    def get_share_url(self, obj):
+        request = self.context.get('request')
+        if request:
+            return request.build_absolute_uri(f'/api/files/public/{obj.share_token}/')
+        return f'/api/files/public/{obj.share_token}/'
+    def get_status(self, obj):
+        now = timezone.now()
+
+        if obj.accessed_at and obj.is_active:
+            return "Accessed"
+
+        if obj.expiration_datetime and now > obj.expiration_datetime:
+            return "Expired"
+
+        if not obj.is_active and obj.revoked_at:
+            return "Revoked"
+
+        return "Active"     
+
+    def get_content_type(self, obj):
+        return obj.file.content_type
+
+    def get_file_id(self, obj):
+        return obj.file.id
     
+
+class ScheduledMailSerializer(serializers.ModelSerializer):
+    # FileShareLink fields via the 'share' FK
+    file_name = serializers.CharField(source='share.file.original_name', read_only=True)
+    file_size = serializers.IntegerField(source='share.file.file_size', read_only=True)
+    owner_email = serializers.EmailField(source='share.owner.email', read_only=True)
+    recipient_email = serializers.EmailField(source='share.recipient_email', read_only=True)
+    share_token = serializers.CharField(source='share.share_token', read_only=True)
+    is_share_active = serializers.BooleanField(source='share.is_active', read_only=True)
+    share_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ScheduledMail
+        fields = [
+            'id', 'file_name', 'file_size', 'owner_email', 'recipient_email',
+            'title', 'message', 'scheduled_for', 'status',
+            'sent_at', 'error_message', 'created_at',
+            'share_token', 'is_share_active', 'share_url'
+        ]
+        read_only_fields = ['id', 'status', 'sent_at', 'error_message', 'created_at']
+
+    def get_share_url(self, obj):
+        request = self.context.get('request')
+        token = obj.share.share_token
+        if request:
+            return request.build_absolute_uri(f'/api/files/public/{token}/')
+        return f'/api/files/public/{token}/'
+
 class FileShareSerializer(serializers.ModelSerializer):
     """
     serializer for viewing the shared files
     """
-    file_name=serializers.CharField(source='files.filename', read_only=True)
+    file_name=serializers.CharField(source='file.original_name', read_only=True)
     file_size=serializers.IntegerField(source='file.file_size', read_only=True)
     owner_email = serializers.EmailField(source='owner.email', read_only=True)
     is_expired = serializers.SerializerMethodField()
@@ -262,8 +349,8 @@ class FileShareSerializer(serializers.ModelSerializer):
     def get_share_url(self, obj):
         request=self.context.get('request')
         if request:
-            return request.build_absolute_uri(f'/api/share/{obj.share_token}/')
-        return f'/api/share/{obj.share_token}/'
+            return request.build_absolute_uri(f'/api/files/public/{obj.share_token}/')
+        return f'/api/files/public/{obj.share_token}/'
     
 
 class PublicFileSerializer(serializers.Serializer):

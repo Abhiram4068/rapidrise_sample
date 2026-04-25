@@ -137,6 +137,40 @@ class FileShareLink(models.Model):
     class Meta:
         db_table = "file_share_links"
         ordering = ["-created_at"]
+
+
+class ScheduledMail(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        SENT = "sent", "Sent"
+        FAILED = "failed", "Failed"
+        CANCELLED = "cancelled", "Cancelled"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    share = models.ForeignKey(
+        "FileShareLink",
+        on_delete=models.CASCADE,
+        related_name="scheduled_mails",
+    )
+    title = models.TextField(blank=True, default="")
+    message = models.TextField(blank=True, default="")
+    scheduled_for = models.DateTimeField(db_index=True)
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.PENDING,
+    )
+    task_id = models.CharField(max_length=255, blank=True, null=True)
+    sent_at = models.DateTimeField(blank=True, null=True)
+    error_message = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "scheduled_mails"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.share_id} @ {self.scheduled_for} [{self.status}]"
     
 #collections for files
 class Collection(models.Model):

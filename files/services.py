@@ -1,5 +1,5 @@
 from django.contrib.auth import get_user_model
-from .models import User, File, FileShareLink, Collection, CollectionFile
+from .models import User, File, FileShareLink, Collection, CollectionFile, ScheduledMail
 from django.db import transaction, IntegrityError
 from rest_framework_simplejwt.tokens import RefreshToken
 import hashlib
@@ -349,7 +349,7 @@ class FileShareService:
     def generate_share_token():
         return secrets.token_urlsafe(32)
     @staticmethod
-    def create_share_token(file_id, owner, recipient_email, expiration_hours, message):
+    def create_share_token(file_id, owner, recipient_email, expiration_hours, title, message, schedule_at=None):
         """
         for creating a file token and returns a fileshare link
         """
@@ -368,18 +368,40 @@ class FileShareService:
             expiration_datetime=expiration_datetime
         )
 
-        email_sent=FileShareService.send_share_email(share, message)
-        if not email_sent:
-            print("Error")
+        if schedule_at:
+            scheduled_mail = ScheduledMail.objects.create(
+                share=share,
+                title=title,
+                message=message,
+                scheduled_for=schedule_at,
+            )
+            from .tasks import send_scheduled_share_email
+
+            task_result = send_scheduled_share_email.apply_async(
+                args=[str(scheduled_mail.id)],
+                eta=schedule_at,
+            )
+            scheduled_mail.task_id = task_result.id
+            scheduled_mail.save(update_fields=["task_id"])
+        else:
+            #used python threads for async email send
+            import threading
+            threading.Thread(
+                target=FileShareService.send_share_email, 
+                args=(share, message, title)
+            ).start()
         return share
     
     @staticmethod
-    def send_share_email(share, message):
+    def send_share_email(share, message, title=None):
         """
         send email
         """
         email_subject = f"{share.owner.email} shared '{share.file.original_name}' with you"
         share_url = f"{settings.BACKEND_BASE_URL}/api/files/public/{share.share_token}/"
+
+        title_display = f"\n        Title: {title}" if title else ""
+        message_display = f"\n        Message from sender: \"{message}\"" if message else ""
 
         email_body = f"""
         Hi,
@@ -387,16 +409,14 @@ class FileShareService:
         {share.owner.email} has shared a file with you.
 
         File: {share.file.original_name}
-        Size: {share.file.file_size / (1024 * 1024):.2f} MB
-
-        {f'Message from sender: "{message}"' if message else ''}
+        Size: {share.file.file_size / (1024 * 1024):.2f} MB{title_display}{message_display}
 
         Click here to access the file:
-        {share_url}    def post(self, request):
+        {share_url}
 
         This link will expire on {share.expiration_datetime.strftime('%B %d, %Y')}.
 
-        ⚠️ IMPORTANT: 
+        IMPORTANT:
         - This link is personal and should not be shared with others.
         - You will need to verify your email address ({share.recipient_email}) to access the file.
 
@@ -413,8 +433,61 @@ class FileShareService:
             )
             return True
         except Exception as e:
-            print("Error sending file")
+            logger.error("Error sending file share email | share_id=%s | error=%s", share.id, str(e))
             return False
+
+
+    @staticmethod
+    def get_user_shares(user):
+        shares=FileShareLink.objects.filter(owner=user)
+        return shares
+
+    @staticmethod
+    def revoke_share(file_share_id, owner):
+        try:
+            file_share=FileShareLink.objects.get(id=file_share_id, owner=owner, accessed=False)
+        except FileShareLink.DoesNotExist:
+            raise ValueError("You haven't made this share or you don't have the permission")
+        file_share.revoked_at=timezone.now()
+        file_share.is_active=False
+        file_share.save(update_fields=["revoked_at", "is_active"])
+        return True
+
+    @staticmethod
+    def revoke_scheduled_mail(user, mail_id):
+        try:
+            scheduled_mail = ScheduledMail.objects.get(id=mail_id, share__owner=user)
+        except ScheduledMail.DoesNotExist:
+            raise ValueError("Scheduled email not found or you don't have permission.")
+            
+        if scheduled_mail.status != ScheduledMail.Status.PENDING:
+            raise ValueError("Only pending scheduled emails can be revoked.")
+            
+        if timezone.now() >= scheduled_mail.scheduled_for:
+            raise ValueError("Time has already reached for this scheduled email.")
+            
+        scheduled_mail.status = ScheduledMail.Status.CANCELLED
+        scheduled_mail.save(update_fields=["status"])
+        
+        if scheduled_mail.task_id:
+            from celery.result import AsyncResult
+            AsyncResult(scheduled_mail.task_id).revoke()
+            
+        return scheduled_mail
+
+    @staticmethod
+    def get_scheduled_mails(user):
+        queryset = ScheduledMail.objects.filter(
+            share__owner=user
+        ).select_related('share', 'share__file', 'share__owner')
+        
+        return {
+            "total": queryset.count(),
+            "pending": queryset.filter(status=ScheduledMail.Status.PENDING).count(),
+            "completed": queryset.filter(status=ScheduledMail.Status.SENT).count(),
+            "mails": queryset
+        }
+
         
 
 class ViewFileShareService:

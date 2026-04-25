@@ -10,6 +10,7 @@ from django.http import FileResponse
 from django.core.exceptions import ValidationError
 from files.serializers import (
     RegisterSerializer, LoginSerializer, UserProfileSerializer, FileUploadSerialzier, FilesListSerializer, FileUpdateSerializer ,FileShareSerializer, FileShareCreateSerializer, PublicFileSerializer,CollectionSerializer, CollectionFileSerializer
+    ,ScheduledMailSerializer, FileShareListSerializer
     )
 from files.services import (
     create_user, authenticate_and_generate_token, AuthenticationError ,UserProfileService, FileService, FileShareService, ViewFileShareService, CollectionService
@@ -377,24 +378,28 @@ class RecentView(APIView):
             "files":serializer.data
         }, status=status.HTTP_200_OK)
 
-class FileShareCreateView(APIView):
-    permission_classes=[IsAuthenticated]
+class FileShareCreateListUpdateView(APIView):
+    permission_classes = [IsAuthenticated]
 
     def post(self, request, file_id):
         serializer=FileShareCreateSerializer(data=request.data, context={'request': request}
 )
         if serializer.is_valid():
             try:
-                share=FileShareService.create_share_token(file_id=file_id,
-                                                          owner=request.user,
-                                                          recipient_email=serializer.validated_data['recipient_email'],
-                                                          expiration_hours=serializer.validated_data['expiration_datetime'],
-                                                          message=serializer.validated_data.get('message', '')
-                                                          )
-                response_serializer=FileShareSerializer(share, context={'request': request}
-)
+                shares = []
+                for email in serializer.validated_data['recipient_emails']:
+                    share=FileShareService.create_share_token(file_id=file_id,
+                                                              owner=request.user,
+                                                              recipient_email=email,
+                                                              expiration_hours=serializer.validated_data['expiration_datetime'],
+                                                              title=serializer.validated_data.get('title', ''),
+                                                              message=serializer.validated_data.get('message', ''),
+                                                              schedule_at=serializer.validated_data.get('schedule_at')  
+                                                              )
+                    shares.append(share)
+                response_serializer=FileShareSerializer(shares, many=True, context={'request': request})
                 return Response(
-                    {'message':'File shared successfully',
+                    {'message':f'File shared successfully with {len(shares)} recipient(s)',
                     'data':response_serializer.data
                     },
                     status=status.HTTP_201_CREATED
@@ -402,12 +407,129 @@ class FileShareCreateView(APIView):
             except ValueError as e:
                 return Response(
                     {'error':str(e)},
-                    status=status.HTTP_404_OT_FOUND
+                    status=status.HTTP_404_NOT_FOUND
                 )
-        return Response(serializer.errors, status=400)
-    
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    def get(self, request):
+        shares=FileShareService.get_user_shares(request.user)
+        total_mails_send = shares.count()
+
+        page=int(request.query_params.get('page', 1))
+        page_size=int(request.query_params.get('page_size',10))
+        start=(page-1)*page_size
+        end=start+page_size
+        paginated_shares = shares[start:end]    
+        serializer=FileShareListSerializer(paginated_shares, many=True, context={'request': request})
+        return Response({
+            "current_page": page,
+            "total_pages": (total_mails_send + page_size - 1),
+            "total_mails_send": total_mails_send,
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
+        
+        
+    def put(self, request, share_id):
+        """
+        view for revoking the shared files
+        """
+        try:
+            FileShareService.revoke_share(file_share_id=share_id, owner=request.user)
+            return Response(
+                {'message':'File revoked successfully'},
+                status=status.HTTP_200_OK
+            )
+        except ValueError as e:
+            return Response(
+                {'error':str(e)},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+class FileShareScheduleCreateListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, file_id):
+        serializer = FileShareCreateSerializer(
+            data=request.data, context={'request': request}
+        )
+        if serializer.is_valid():
+            schedule_at = serializer.validated_data.get('schedule_at')
+            if not schedule_at:
+                return Response(
+                    {"schedule_at": ["This field is required for scheduled share."]},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            try:
+                shares = []
+                for email in serializer.validated_data['recipient_emails']:
+                    share = FileShareService.create_share_token(
+                        file_id=file_id,
+                        owner=request.user,
+                        recipient_email=email,
+                        expiration_hours=serializer.validated_data['expiration_datetime'],
+                        title=serializer.validated_data.get('title', ''),
+                        message=serializer.validated_data.get('message', ''),
+                        schedule_at=schedule_at
+                    )
+                    shares.append(share)
+                response_serializer = FileShareSerializer(shares, many=True, context={'request': request})
+                return Response(
+                    {
+                        'message': f'Email scheduled successfully for {len(shares)} recipient(s)',
+                        'data': response_serializer.data
+                    },
+                    status=status.HTTP_201_CREATED
+                )
+            except ValueError as e:
+                return Response(
+                    {'error': str(e)},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    def get(self, request):
+        result = FileShareService.get_scheduled_mails(request.user)
+        
+        if not result["mails"].exists():
+            return Response(
+                {"message": "No scheduled mails"},
+                status=status.HTTP_204_NO_CONTENT
+            )
+        
+        serializer = ScheduledMailSerializer(
+            result["mails"], many=True, context={'request': request}
+        )
+        return Response(
+            {
+                "total": result["total"],
+                "pending": result["pending"],
+                "completed": result["completed"],
+                "data": serializer.data
+            },
+            status=status.HTTP_200_OK
+        )
+        
+
+class RevokeScheduledMailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, mail_id):   
+        try:
+            FileShareService.revoke_scheduled_mail(request.user, mail_id)
+            
+            return Response(
+                {"message": "Scheduled email revoked successfully"},
+                status=status.HTTP_200_OK
+            )
+        except ValueError as e:
+            return Response(
+                {"error": str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
 
 class PublicFileAccessView(APIView):
+    authentication_classes=[]
     permission_classes=[]
 
     def get(self, request, token):
@@ -418,6 +540,14 @@ class PublicFileAccessView(APIView):
             return Response({'error':str(error_message)}, status=status_code)
         
         share=serializer.share
+        if share.accessed:
+                return Response(
+                    {
+                        'error': 'File has already been accessed',
+                        'message': 'This shared link can only be accessed once for security reasons.'
+                    },
+                    status=status.HTTP_403_FORBIDDEN
+                )
 
         ViewFileShareService.mark_as_accessed(share)
 
