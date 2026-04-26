@@ -49,7 +49,7 @@ class User(AbstractUser):
         choices=DesignationChoices.choices,
         default=DesignationChoices.PROJECT_MANAGER
     )
-    storage_limit_bytes = models.BigIntegerField(default=10 * 1024 * 1024)  
+    storage_limit_bytes = models.BigIntegerField(default=1_073_741_824)
     storage_used_bytes = models.BigIntegerField(default=0)
 
     USERNAME_FIELD = 'email'
