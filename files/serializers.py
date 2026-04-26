@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 
 class RegisterSerializer(serializers.ModelSerializer):
     confirm_password=serializers.CharField(write_only=True, min_length=8)
+    date_of_birth = serializers.DateField(required=False, allow_null=True)
     class Meta:
         model=User
         fields=[
@@ -54,14 +55,42 @@ class LoginSerializer(serializers.Serializer):
 class UserProfileSerializer(serializers.ModelSerializer):
     date_joined = serializers.SerializerMethodField()
     total_files = serializers.IntegerField(read_only=True)
-
+    status = serializers.SerializerMethodField(source="is_active", read_only=True) 
+    designation = serializers.SerializerMethodField()
     class Meta:
         model = User
-        fields = ["id", "email", "first_name", "last_name", "role", "date_joined", "total_files"]
+        fields = ["id", "email", "first_name", "last_name", "designation", "date_joined", "total_files", "date_of_birth", "status"]
         read_only_fields = fields
 
     def get_date_joined(self, obj):
         return obj.date_joined.strftime("%B %d %Y")
+
+    def get_status(self, obj):
+        return "Active" if obj.is_active else "Unactive"
+
+    def get_designation(self, obj):
+        return obj.get_designation_display()
+
+class ChangePasswordSerialzier(serializers.Serializer):
+    current_password=serializers.CharField(required=True, write_only=True)
+    new_password=serializers.CharField(required=True, write_only=True)
+    confirm_password=serializers.CharField(required=True, write_only=True)
+
+    def validate_current_password(self, value):
+        user=self.context["request"].user
+        if not user.check_password(value):
+            raise serializers.ValidationError("Invalid Credentials!!!")
+        return value
+    def validate(self, data):
+        if data["new_password"]!=data["confirm_password"]:
+            raise serializers.ValidationError({"confirm_password":"Passwords doesnt match"})
+
+        validate_password(data["new_password"], self.context["request"].user)
+
+        if (self.context["request"].user.check_password(data["new_password"])):
+            raise serializers.ValidationError({"new_password": "New password cannot be same as old password"})
+        return data
+
       
 class FileUploadSerialzier(serializers.Serializer):
     files=serializers.ListField(

@@ -13,7 +13,7 @@ from django.core.mail import send_mail
 from django.conf import settings
 from django.utils import timezone
 from django.db.models import Sum, Count
-
+from django.contrib.auth import update_session_auth_hash
 
 import logging
 logger = logging.getLogger(__name__)
@@ -52,7 +52,26 @@ def authenticate_and_generate_token(email:str, password:str)->dict:
             'refresh':str(refresh)
         }
     }
-    
+
+def get_designation():
+    return [
+        {"value": key, "label": label}
+        for key, label in User.DesignationChoices.choices
+    ]
+
+class AuthService:
+    @staticmethod
+    def change_password(data, user, request=None):
+        new_password=data["new_password"]
+
+        user.set_password(new_password)
+        user.save()
+        #to keep the user logged in     
+        if request:
+            update_session_auth_hash(request, user)
+        return user
+
+
 class UserProfileService:
     @staticmethod
     def get_profile(user: User):
@@ -60,12 +79,12 @@ class UserProfileService:
             User.objects
             .filter(pk=user.pk)
             .annotate(total_files=Count("files"))  # related_name
-            .only("id", "email", "first_name", "last_name", "role")
+            .only("id", "email", "first_name", "last_name", "designation", "date_of_birth")
             .first()
         )
     @staticmethod
     def update_profile(user: User, data: dict) -> User:
-        updatable_fields = ["first_name", "last_name", "date_of_birth", "role"]
+        updatable_fields = ["first_name", "last_name", "date_of_birth", "designation"]
         
         for field in updatable_fields:
             if field in data:

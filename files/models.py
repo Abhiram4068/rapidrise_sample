@@ -32,21 +32,22 @@ class UserManager(BaseUserManager):
         return self.create_user(email=email, password=password, **extra_fields)
 class User(AbstractUser):
 
-    class RoleChoices(models.TextChoices):
-        PROJECT_MANAGER   = "project_manager", "Project Manager"
-        TEAM_MANAGER      = "team_manager", "Team Manager"
-        DELIVERY_MANAGER  = "delivery_manager", "Delivery Manager"
-        PRODUCT_MANAGER   = "product_manager", "Product Manager"
-        OPERATIONS_MANAGER= "operations_manager", "Operations Manager"
+    class DesignationChoices(models.TextChoices):
+        PROJECT_MANAGER = "project_manager", "Project Manager"
+        TEAM_LEAD = "team_lead", "Team Lead"
+        DELIVERY_MANAGER = "delivery_manager", "Delivery Manager"
+        PRODUCT_MANAGER = "product_manager", "Product Manager"
+        OPERATIONS_MANAGER = "operations_manager", "Operations Manager"
+        PROGRAM_MANAGER = "program_manager", "Program Manager"
 
     username = None
     email = models.EmailField(unique=True)
     date_of_birth = models.DateField(null=True, blank=True)
 
-    role = models.CharField(
+    designation = models.CharField(
         max_length=20,
-        choices=RoleChoices.choices,
-        default=RoleChoices.PROJECT_MANAGER
+        choices=DesignationChoices.choices,
+        default=DesignationChoices.PROJECT_MANAGER
     )
 
     USERNAME_FIELD = 'email'

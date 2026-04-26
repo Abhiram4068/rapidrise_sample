@@ -9,11 +9,11 @@ from rest_framework_simplejwt.exceptions import TokenError
 from django.http import FileResponse
 from django.core.exceptions import ValidationError
 from files.serializers import (
-    RegisterSerializer, LoginSerializer, UserProfileSerializer, FileUploadSerialzier, FilesListSerializer, FileUpdateSerializer ,FileShareSerializer, FileShareCreateSerializer, PublicFileSerializer,CollectionSerializer, CollectionFileSerializer
+    RegisterSerializer, LoginSerializer, UserProfileSerializer,ChangePasswordSerialzier, FileUploadSerialzier, FilesListSerializer, FileUpdateSerializer ,FileShareSerializer, FileShareCreateSerializer, PublicFileSerializer,CollectionSerializer, CollectionFileSerializer
     ,ScheduledMailSerializer, FileShareListSerializer
     )
 from files.services import (
-    create_user, authenticate_and_generate_token, AuthenticationError ,UserProfileService, FileService, FileShareService, ViewFileShareService, CollectionService
+    create_user, get_designation, authenticate_and_generate_token, AuthenticationError ,AuthService,UserProfileService, FileService, FileShareService, ViewFileShareService, CollectionService
     )
 from rest_framework.pagination import PageNumberPagination
 
@@ -65,6 +65,7 @@ class RegisterView(APIView):
     
     def post(self, request):
         serializer=RegisterSerializer(data=request.data)
+        
         serializer.is_valid(raise_exception=True)
         try:
             create_user(serializer.validated_data)
@@ -82,7 +83,12 @@ class RegisterView(APIView):
             {'message':'User Registered successfully!!!'},
             status=status.HTTP_201_CREATED
         )
+class DesignationListView(APIView):
+    permission_classes = [AllowAny]
 
+    def get(self, request):
+        designation = get_designation()
+        return Response(designation)
 
 class LoginView(APIView):
     authentication_classes=[]
@@ -166,6 +172,26 @@ class UserProfileView(APIView):
         user = UserProfileService.update_profile(user=request.user, data=request.data)
         serializer = self.serializer_class(user, context={"request": request})
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+class ChangePasswordView(APIView):
+    permission_classes=[IsAuthenticated]
+    serializer_class=ChangePasswordSerialzier
+    def post(self, request):
+        print(request.data)
+        serializer=self.serializer_class(
+            data = request.data,
+            context = {'request':request}
+        )
+        serializer.is_valid(raise_exception=True)
+        AuthService.change_password(
+            data=serializer.validated_data,
+            user=request.user,
+            request=request
+        )
+        return Response(
+            {"message":"Password changed successfully"},
+            status=status.HTTP_200_OK
+            )
 
 import time
 class FileUploadView(APIView):
