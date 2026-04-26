@@ -57,9 +57,11 @@ class UserProfileSerializer(serializers.ModelSerializer):
     total_files = serializers.IntegerField(read_only=True)
     status = serializers.SerializerMethodField(source="is_active", read_only=True) 
     designation = serializers.SerializerMethodField()
+    storage_used_bytes=serializers.SerializerMethodField()
+    storage_used_bytes=serializers.SerializerMethodField()
     class Meta:
         model = User
-        fields = ["id", "email", "first_name", "last_name", "designation", "date_joined", "total_files", "date_of_birth", "status"]
+        fields = ["id", "email", "first_name", "last_name", "designation", "date_joined", "total_files", "date_of_birth", "status", "storage_used_bytes"]
         read_only_fields = fields
 
     def get_date_joined(self, obj):
@@ -70,6 +72,9 @@ class UserProfileSerializer(serializers.ModelSerializer):
 
     def get_designation(self, obj):
         return obj.get_designation_display()
+
+    def get_storage_used_bytes(self, obj):
+        return obj.storage_used_bytes
 
 class ChangePasswordSerialzier(serializers.Serializer):
     current_password=serializers.CharField(required=True, write_only=True)

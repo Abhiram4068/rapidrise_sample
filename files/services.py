@@ -1,5 +1,6 @@
 from django.contrib.auth import get_user_model
 from .models import User, File, FileShareLink, Collection, CollectionFile, ScheduledMail
+from django.db.models import F
 from django.db import transaction, IntegrityError
 from rest_framework_simplejwt.tokens import RefreshToken
 import hashlib
@@ -14,7 +15,7 @@ from django.conf import settings
 from django.utils import timezone
 from django.db.models import Sum, Count
 from django.contrib.auth import update_session_auth_hash
-
+from .exceptions import StorageLimitExceeded
 import logging
 logger = logging.getLogger(__name__)
 
@@ -93,6 +94,36 @@ class UserProfileService:
         user.save(update_fields=updatable_fields)
         return user
 
+class StorageService:
+    """
+    service for handling storage for the auth user
+    """
+    @staticmethod
+    def claim(user_id, file_size):
+        with transaction.atomic():
+            updated=(
+                User.objects.filter(
+                    id=user_id,
+                    storage_used_bytes__lte=F("storage_limit_bytes")-file_size
+                ).update(
+                    storage_used_bytes=F("storage_used_bytes")+file_size
+                )
+            )
+            if updated == 0:
+                raise StorageLimitExceeded("Storage limit of 1GB exceeded")
+
+    @staticmethod
+    def release(user_id, file_size):
+        with transaction.atomic():
+            User.objects.filter(
+                id=user_id
+            ).update(
+                F("storage_used_bytes")-file_size
+            )
+
+
+
+
 class FileService:
     """
     Handles uploads with checksum-based deduplication,
@@ -105,7 +136,10 @@ class FileService:
     def upload_files(user, files:List, description=None):
         logger.info(f"Starting file processing | user_id={user.id}")
         uploaded_files=[]
+        
         for file_obj in files:
+            
+            StorageService.claim(user.id, file_obj.size)
             checksum=FileService._calculate_checksum(file_obj)
             
             
