@@ -207,6 +207,13 @@ class FileService:
             File, user=user, id=file_id, is_deleted=False, is_archive=False
         )
         return file_obj
+
+    @staticmethod
+    def get_deleted_file_by_id(user, file_id):
+        file_obj=get_object_or_404(
+            File, user=user, id=file_id, is_deleted=True, is_archive=False
+        )
+        return file_obj
     
     @staticmethod
     def update_file_details(file_obj, data):

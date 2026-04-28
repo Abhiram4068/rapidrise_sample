@@ -343,6 +343,22 @@ class FileDeleteView(APIView):
             {'detail':'File restored successfuly!'},
             status=status.HTTP_200_OK
         )
+class ClearTrash(APIView):
+    """
+    View for handling trash clear functionality
+    """
+    permission_classes=[IsAuthenticated]
+    serializer_class=FilesListSerializer
+    def delete(self, request, file_id): 
+        deleted_file=FileService.get_deleted_file_by_id(user=request.user, file_id=file_id)
+        deleted_file.delete()
+        return Response(
+            status=status.HTTP_204_NO_CONTENT
+        )
+
+
+
+
 
     
 class FileArchiveView(APIView):
