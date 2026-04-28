@@ -114,10 +114,15 @@ class FileUploadSerialzier(serializers.Serializer):
         'application/pdf',
         'text/plain',
         'application/msword',
+        'application/octet-stream',
+        'application/vnd.ms-excel',
+        'application/zip',
         'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        
     ]
         
         for file in files:
+            print(file.content_type)
             if file.size>max_file_size:
                 logger.warning(
                     f"File too large | name={file.name} | size={file.size}"

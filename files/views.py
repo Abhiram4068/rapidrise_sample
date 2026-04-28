@@ -343,7 +343,18 @@ class FileDeleteView(APIView):
             {'detail':'File restored successfuly!'},
             status=status.HTTP_200_OK
         )
-
+class ClearTrash(APIView):
+    """
+    View for handling trash clear functionality
+    """
+    permission_classes=[IsAuthenticated]
+    serializer_class=FilesListSerializer
+    def delete(self, request, file_id): 
+        deleted_file=FileService.get_deleted_file_by_id(user=request.user, file_id=file_id)
+        deleted_file.delete()
+        return Response(
+            status=status.HTTP_204_NO_CONTENT
+        )
     
 class FileArchiveView(APIView):
     """
@@ -585,17 +596,20 @@ class PublicFileAccessView(APIView):
                 as_attachment=False,
                 filename=filename
         )
-        
+
+
+logger = logging.getLogger("collections")
         
 class CollectionListCreateView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-
+        logger.info(f"Fetching collections | user_id={request.user.id}")
         collections = CollectionService.get_user_collections(request.user)
         search = request.query_params.get('search', '').strip()
 
         if search:
+            logger.info(f"Search applied | user_id={request.user.id} | search={search}")
             collections = collections.filter(name__icontains=search)
         sort_by = request.query_params.get('sort_by', 'created_at')
         sort_order = request.query_params.get('sort_order', 'desc')
@@ -608,6 +622,8 @@ class CollectionListCreateView(APIView):
         else:
             collections = collections.order_by(f'-{sort_by}')
         total_collections=collections.count()
+        logger.info(f"Collections fetched | user_id={request.user.id} | count={total_collections}")
+
         serializer = CollectionSerializer(collections, many=True)
         return Response(
             {
@@ -618,15 +634,21 @@ class CollectionListCreateView(APIView):
             )
 
     def post(self, request):
+        logger.info(f"Create collection request | user_id={request.user.id}")
         serializer = CollectionSerializer(data=request.data)
         if not serializer.is_valid():
+            logger.error(f"Invalid collection data | user_id={request.user.id} | errors={serializer.errors}")
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         try:
             collection = CollectionService.create_collection(
                 user=request.user,
                 validated_data=serializer.validated_data,
             )
+            logger.info(
+                f"Collection created successfully | user_id={request.user.id} | collection_id={collection.id}"
+            )
         except ValidationError as e:
+            logger.error(f"Validation error | user_id={request.user.id} | error={e}")
             return Response({"detail": e.message}, status=status.HTTP_400_BAD_REQUEST)
         return Response(
             CollectionSerializer(collection).data,

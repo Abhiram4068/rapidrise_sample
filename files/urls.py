@@ -1,6 +1,6 @@
 from django.urls import path
 from files.views import (
-    RegisterView, LoginView, TokenRefreshCookieView,DesignationListView, ChangePasswordView,LogoutView, UserProfileView, FileUploadView, FileDownloadView, FileListView, FileUpdateView, FileArchiveView,FileDetailView,FileDeleteView, FileShareCreateListUpdateView, PublicFileAccessView,
+    RegisterView, LoginView, TokenRefreshCookieView,DesignationListView, ChangePasswordView,LogoutView, UserProfileView, FileUploadView, ClearTrash, FileDownloadView, FileListView, FileUpdateView, FileArchiveView,FileDetailView,FileDeleteView, FileShareCreateListUpdateView, PublicFileAccessView,
     CollectionListCreateView, CollectionDetailView, CollectionFileView, FileStarredList, CollectionStarredList, RecentView, FileShareScheduleCreateListView, RevokeScheduledMailView
     )
 """
@@ -28,7 +28,7 @@ urlpatterns=[
     path('files/<uuid:file_id>/file-delete/', FileDeleteView.as_view(), name='file-delete'),
     path('files/<uuid:file_id>/archive/', FileArchiveView.as_view(), name='file-archive'),
     path('files/view-recently-deleted/',FileDeleteView.as_view(), name='view-recently-deleted'),
-
+    path('files/clear-trash/<uuid:file_id>/',ClearTrash.as_view(), name='clear-trash'),
     path('files/recents/',RecentView.as_view(), name='recent-files' ),
     #starred files and folders-------------------------------------------------------------------
     path('files/starred/', FileStarredList.as_view(), name='starred-files'),
