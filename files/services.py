@@ -243,6 +243,13 @@ class FileService:
     def get_user_deleted_files(user):
         all_deleted_files=File.objects.filter(user=user, is_deleted=True)
         return all_deleted_files
+
+    @staticmethod
+    def get_deleted_file_by_id(user, file_id):
+        file_obj=get_object_or_404(
+            File, user=user, id=file_id, is_deleted=True, is_archive=False
+        )
+        return file_obj
     
     @staticmethod
     def user_restore_file(user, file_id):

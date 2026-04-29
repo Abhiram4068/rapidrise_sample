@@ -114,10 +114,15 @@ class FileUploadSerialzier(serializers.Serializer):
         'application/pdf',
         'text/plain',
         'application/msword',
+        'application/octet-stream',
+        'application/vnd.ms-excel',
+        'application/zip',
         'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        
     ]
         
         for file in files:
+            print(file.content_type)
             if file.size>max_file_size:
                 logger.warning(
                     f"File too large | name={file.name} | size={file.size}"
@@ -241,6 +246,7 @@ class CollectionFileSerializer(serializers.ModelSerializer):
     content_type = serializers.CharField(source="file.content_type", read_only=True)
     display_name=serializers.CharField(source="file.display_name", read_only=True)
     added_at = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", read_only=True)
+    file_url=serializers.SerializerMethodField()
 
     class Meta:
         model = CollectionFile
@@ -251,9 +257,15 @@ class CollectionFileSerializer(serializers.ModelSerializer):
             "content_type",
             "display_name",
             "added_at",
-            "file"
+            "file",
+            "file_url"
         ]
         read_only_fields = ["id", "added_at", "file"]
+    def get_file_url(self, obj):
+        request = self.context.get('request')
+        if obj.file and request:
+            return request.build_absolute_uri(obj.file.file.url)
+        return None
 
 class FileShareCreateSerializer(serializers.Serializer):
     recipient_emails=serializers.ListField(
