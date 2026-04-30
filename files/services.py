@@ -537,19 +537,23 @@ class FileShareService:
         return scheduled_mail
 
     @staticmethod
-    def get_scheduled_mails(user):
+    def get_scheduled_mails(user, status_filter=None):
         queryset = ScheduledMail.objects.filter(
             share__owner=user
         ).select_related('share', 'share__file', 'share__owner')
         
         return {
-            "total": queryset.count(),
+            "total": queryset.count(),           # unfiltered (for stat cards)
             "pending": queryset.filter(status=ScheduledMail.Status.PENDING).count(),
             "completed": queryset.filter(status=ScheduledMail.Status.SENT).count(),
-            "mails": queryset
+            "filtered_total": queryset.filter(   # filtered count for pagination
+                status=status_filter.lower()
+            ).count() if status_filter and status_filter.lower() != 'all' else queryset.count(),
+            "mails": queryset.filter(status=status_filter.lower()) 
+                    if status_filter and status_filter.lower() != 'all' 
+                    else queryset
         }
-
-        
+            
 
 class ViewFileShareService:
     @staticmethod

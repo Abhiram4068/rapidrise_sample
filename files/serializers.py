@@ -355,14 +355,17 @@ class ScheduledMailSerializer(serializers.ModelSerializer):
     share_token = serializers.CharField(source='share.share_token', read_only=True)
     is_share_active = serializers.BooleanField(source='share.is_active', read_only=True)
     share_url = serializers.SerializerMethodField()
-
+    content_type = serializers.SerializerMethodField()
+    share=serializers.SerializerMethodField()
+    accessed_at = serializers.SerializerMethodField()
+    expiration_datetime=serializers.CharField(source="share.expiration_datetime", read_only=True)
     class Meta:
         model = ScheduledMail
         fields = [
             'id', 'file_name', 'file_size', 'owner_email', 'recipient_email',
-            'title', 'message', 'scheduled_for', 'status',
+            'title', 'message', 'scheduled_for', 'status','share',
             'sent_at', 'error_message', 'created_at',
-            'share_token', 'is_share_active', 'share_url'
+            'share_token', 'is_share_active', 'share_url', 'content_type', 'accessed_at','expiration_datetime'
         ]
         read_only_fields = ['id', 'status', 'sent_at', 'error_message', 'created_at']
 
@@ -372,6 +375,16 @@ class ScheduledMailSerializer(serializers.ModelSerializer):
         if request:
             return request.build_absolute_uri(f'/api/files/public/{token}/')
         return f'/api/files/public/{token}/'
+    def get_content_type(self, obj):
+        return obj.share.file.content_type
+    def get_share(self, obj):
+        if obj.share.accessed:
+            return "Accessed"
+        if obj.share.is_active:
+            return "Active"
+        return "Revoked"
+    def get_accessed_at(self, obj):
+        return obj.share.accessed_at
 
 class FileShareSerializer(serializers.ModelSerializer):
     """
