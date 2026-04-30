@@ -568,4 +568,13 @@ class ViewFileShareService:
             share.accessed_at=timezone.now()
             share.save(update_fields=["accessed", "accessed_at"])
 
-
+class ReportService:
+    @staticmethod
+    def get_successful_downloads(user):
+        if not user.designation or 'manager' not in user.designation.lower():
+            raise PermissionDenied("Only managers can access this report.")
+            
+        # Get all file shares that have been successfully accessed (downloaded)
+        return FileShareLink.objects.filter(
+            accessed=True
+        ).select_related('file', 'owner').order_by('-accessed_at')

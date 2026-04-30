@@ -1,7 +1,7 @@
 from django.urls import path
 from files.views import (
     RegisterView, LoginView, TokenRefreshCookieView,DesignationListView, ChangePasswordView,LogoutView, UserProfileView, FileUploadView, ClearTrash, FileDownloadView, FileListView, FileUpdateView, FileArchiveView,FileDetailView,FileDeleteView, FileShareCreateListUpdateView, PublicFileAccessView,
-    CollectionListCreateView, CollectionDetailView, CollectionFileView, FileStarredList, CollectionStarredList, RecentView, FileShareScheduleCreateListView, RevokeScheduledMailView
+    CollectionListCreateView, CollectionDetailView, CollectionFileView, FileStarredList, CollectionStarredList, RecentView, FileShareScheduleCreateListView, RevokeScheduledMailView, ReportDownloadView
     )
 """
     app level urls
@@ -52,4 +52,7 @@ urlpatterns=[
     path('scheduled-mails/<uuid:mail_id>/revoke/', RevokeScheduledMailView.as_view(), name='revoke-scheduled-mail'),
     path('files/public/<str:token>/', PublicFileAccessView.as_view(), name='public-file-access'),
 
+    #report downloads
+    path('report-downloads/', ReportDownloadView.as_view(), name='report-downloads'),
+    
 ]

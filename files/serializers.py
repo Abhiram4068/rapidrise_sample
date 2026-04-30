@@ -431,3 +431,7 @@ class PublicFileSerializer(serializers.Serializer):
             raise serializers.ValidationError("Share link have expired")
         self.share = share
         return value
+
+class ReportDownloadRequestSerializer(serializers.Serializer):
+    page = serializers.IntegerField(default=1, min_value=1)
+    page_size = serializers.IntegerField(default=10, min_value=1)
