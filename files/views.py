@@ -526,20 +526,24 @@ class FileShareScheduleCreateListView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     def get(self, request):
-        result = FileShareService.get_scheduled_mails(request.user)
+        status_filter = request.query_params.get('status', None)    
+        result = FileShareService.get_scheduled_mails(request.user, status_filter)
         
         if not result["mails"].exists():
             return Response(
                 {"message": "No scheduled mails"},
                 status=status.HTTP_204_NO_CONTENT
             )
+        paginator = DefaultPageNumberPagination()
+        paginated_qs = paginator.paginate_queryset(result["mails"], request)
         
         serializer = ScheduledMailSerializer(
-            result["mails"], many=True, context={'request': request}
+            paginated_qs, many=True, context={'request': request}
         )
         return Response(
             {
                 "total": result["total"],
+                 "filtered_total": result["filtered_total"],
                 "pending": result["pending"],
                 "completed": result["completed"],
                 "data": serializer.data
