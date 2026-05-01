@@ -432,6 +432,7 @@ class PublicFileSerializer(serializers.Serializer):
         self.share = share
         return value
 
-class ReportDownloadRequestSerializer(serializers.Serializer):
-    page = serializers.IntegerField(default=1, min_value=1)
-    page_size = serializers.IntegerField(default=10, min_value=1)
+class ReportQuerySerializer(serializers.Serializer):
+    download = serializers.BooleanField(required=False, default=False)
+    timeline = serializers.ChoiceField(choices=['weekly', 'monthly'], required=False)
+    search = serializers.CharField(required=False, allow_blank=True, default='')

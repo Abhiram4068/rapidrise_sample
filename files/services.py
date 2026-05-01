@@ -1,3 +1,4 @@
+from django.db.models import Q
 from django.contrib.auth import get_user_model
 from .models import User, File, FileShareLink, Collection, CollectionFile, ScheduledMail
 from django.db.models import F
@@ -567,14 +568,159 @@ class ViewFileShareService:
             share.accessed=True
             share.accessed_at=timezone.now()
             share.save(update_fields=["accessed", "accessed_at"])
-
+import csv
+from io import StringIO
+from django.utils.timezone import localtime
 class ReportService:
+
     @staticmethod
-    def get_successful_downloads(user):
-        if not user.designation or 'manager' not in user.designation.lower():
-            raise PermissionDenied("Only managers can access this report.")
-            
-        # Get all file shares that have been successfully accessed (downloaded)
-        return FileShareLink.objects.filter(
-            accessed=True
-        ).select_related('file', 'owner').order_by('-accessed_at')
+    def get_queryset(owner, timeline=None, search=''):
+        """
+        Fetch:
+        1. All shared files
+        2. All SENT scheduled mails
+        """
+
+        shares = (
+            FileShareLink.objects
+            .filter(owner=owner)
+            .select_related("file")
+        )
+
+        mails = (
+            ScheduledMail.objects
+            .filter(
+                share__owner=owner,
+                status=ScheduledMail.Status.SENT,
+                sent_at__isnull=False
+            )
+            .select_related("share", "share__file")
+        )
+
+        if timeline == 'weekly':
+            shares = shares.filter(created_at__gte=timezone.now() - timedelta(days=7))
+            mails = mails.filter(sent_at__gte=timezone.now() - timedelta(days=7))
+        elif timeline == 'monthly':
+            shares = shares.filter(created_at__gte=timezone.now() - timedelta(days=31))
+            mails = mails.filter(sent_at__gte=timezone.now() - timedelta(days=31))
+        if search:
+            shares = shares.filter(
+            Q(file__original_name__icontains=search) |
+            Q(recipient_email__icontains=search)
+            )
+            mails = mails.filter(
+            Q(share__file__original_name__icontains=search) |
+            Q(share__recipient_email__icontains=search)
+            )
+
+        return shares, mails
+    @staticmethod
+    def get_dashboard_metrics(owner):
+        """
+        Compute dashboard stats
+        """
+
+        # Total shares
+        total_shares = FileShareLink.objects.filter(
+            owner=owner
+        ).count()
+
+        # Active links (not expired)
+        active_links = FileShareLink.objects.filter(
+            owner=owner,
+            accessed=False,
+            expiration_datetime__gt=timezone.now()
+        ).count()
+
+        # Next scheduled mail
+        next_schedule = ScheduledMail.objects.filter(
+            share__owner=owner,
+            status=ScheduledMail.Status.PENDING
+        ).order_by("created_at").first()
+
+        next_report_days = (
+            (next_schedule.created_at - timezone.now()).days
+            if next_schedule else None
+        )
+
+        return {
+            "total_shares": total_shares,
+            "active_links": active_links,
+            "next_report_days": next_report_days
+        }
+
+    @staticmethod
+    def build_response_data(shares, mails):
+        """
+                Normalize + merge data
+                """
+        data = []
+
+        # 🔹 Shares
+        for share in shares:
+            data.append({
+                "type": "SHARES",
+                "id": str(share.id),
+                "file_name": share.file.original_name,
+                "recipient": share.recipient_email,
+                "status": "shared",
+                "sent_at": share.created_at,                
+                "sort_time": share.created_at,  
+                "accessed": share.accessed,
+                "accessed_at":share.accessed_at or "N/A"
+            })
+
+        # 🔹 Mails
+        for mail in mails:
+            share = mail.share
+            file = share.file
+
+            data.append({
+                "type": "SCHEDULES",
+                "id": str(mail.id),
+                "file_name": file.original_name,
+                "recipient": share.recipient_email,
+                "status": mail.status,
+                "sent_at": localtime(mail.sent_at),
+                "sort_time": mail.sent_at,
+                "accessed": share.accessed,
+                "accessed_at":share.accessed_at or "N/A"
+            })
+
+        # Sort (latest first)
+        data.sort(key=lambda x: x["sort_time"], reverse=True)
+
+        return data
+
+    @staticmethod
+    def generate_csv(data):
+        """
+        Generate CSV from unified data
+        """
+
+        buffer = StringIO()
+        writer = csv.writer(buffer)
+
+        writer.writerow([
+            "Type",
+            "ID",
+            "File Name",
+            "Recipient",
+            "Status",
+            "Sent At",
+            "Accessed"
+        ])
+
+        for row in data:
+            writer.writerow([
+                row["type"],
+                row["id"],
+                row["file_name"],
+                row["recipient"],
+                row["status"],
+                row["sent_at"],
+                row["accessed"],
+            ])
+
+        buffer.seek(0)
+        return buffer

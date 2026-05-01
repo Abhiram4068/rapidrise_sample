@@ -10,7 +10,7 @@ from django.http import FileResponse
 from django.core.exceptions import ValidationError, PermissionDenied
 from files.serializers import (
     RegisterSerializer, LoginSerializer, UserProfileSerializer,ChangePasswordSerialzier, FileUploadSerialzier, FilesListSerializer, FileUpdateSerializer ,FileShareSerializer, FileShareCreateSerializer, PublicFileSerializer,CollectionSerializer, CollectionFileSerializer
-    ,ScheduledMailSerializer, FileShareListSerializer, ReportDownloadRequestSerializer
+    ,ScheduledMailSerializer, FileShareListSerializer, ReportQuerySerializer
     )
 from files.services import (
     create_user, get_designation, authenticate_and_generate_token, AuthenticationError ,AuthService, UserProfileService, FileService, FileShareService, ViewFileShareService, CollectionService, ReportService
@@ -749,77 +749,47 @@ from rest_framework import status
 from django.core.exceptions import PermissionDenied
 from django.http import StreamingHttpResponse
 from datetime import datetime
-class Echo:
-    """Fake buffer for streaming CSV"""
-    def write(self, value):
-        return value
+
+
+
 
 class ReportDownloadView(APIView):
     permission_classes = [IsAuthenticated]
+    pagination_class = DefaultPageNumberPagination 
 
     def get(self, request):
-        serializer = ReportDownloadRequestSerializer(data=request.query_params)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        # Validate query params
+        serializer = ReportQuerySerializer(data=request.query_params)
         
-        page = serializer.validated_data['page']
-        page_size = serializer.validated_data['page_size']
-        download = request.query_params.get("download", "false").lower() == "true"
+        serializer.is_valid(raise_exception=True)
 
-        try:
-            queryset = ReportService.get_successful_downloads(request.user)
-        except PermissionDenied as e:
-            return Response({"error": str(e)}, status=status.HTTP_403_FORBIDDEN)
+        download = serializer.validated_data.get("download")
+        timeline = serializer.validated_data.get("timeline")
+        search = serializer.validated_data.get("search", "")
 
-        # 🔥 PERFORMANCE FIX (avoid N+1 queries)
-        queryset = queryset.select_related("file", "sender").prefetch_related("recipients")
+        # Fetch data
+        shares, mails = ReportService.get_queryset(request.user, timeline, search)
 
-        # ✅ CSV DOWNLOAD
+        # Build response
+        data = ReportService.build_response_data(shares, mails)
+
+        #dashboard metrics
+        dashboard = ReportService.get_dashboard_metrics(request.user)
+
+        # Download case
         if download:
-            return self.generate_csv(queryset)
+            csv_buffer = ReportService.generate_csv(data)
 
-        # ✅ PAGINATED RESPONSE
-        total_downloads = queryset.count()
-        start = (page - 1) * page_size
-        end = start + page_size
-        paginated_data = queryset[start:end]
+            response = HttpResponse(
+                csv_buffer.getvalue(),
+                content_type="text/csv"
+            )
+            response["Content-Disposition"] = 'attachment; filename="mail_report.csv"'
+            return response
+        paginator = self.pagination_class()
+        page = paginator.paginate_queryset(data, request, view=self)
 
-        response_serializer = FileShareListSerializer(
-            paginated_data, many=True, context={'request': request}
-        )
+        paginated_response = paginator.get_paginated_response(page)
+        paginated_response.data["dashboard"] = dashboard
 
-        return Response({
-            "current_page": page,
-            "total_pages": (total_downloads + page_size - 1) // page_size if total_downloads > 0 else 1,
-            "total_mails_send": total_downloads,
-            "data": response_serializer.data
-        }, status=status.HTTP_200_OK)
-
-    def generate_csv(self, queryset):
-        filename = f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-
-        pseudo_buffer = Echo()
-        writer = csv.writer(pseudo_buffer)
-
-        def stream():
-            # Header
-            yield writer.writerow(["File Name", "Sender", "Recipients", "Sent At", "Status"])
-
-            for obj in queryset.iterator():
-                recipients = ", ".join(
-                    [r.email for r in obj.recipients.all()]
-                ) if hasattr(obj, "recipients") else getattr(obj, "recipient_email", "")
-
-                yield writer.writerow([
-                    getattr(obj.file, "original_name", ""),
-                    getattr(obj.sender, "email", ""),
-                    recipients,
-                    obj.created_at.strftime("%Y-%m-%d %H:%M:%S") if obj.created_at else "",
-                    "SUCCESS"
-                ])
-
-        response = StreamingHttpResponse(stream(), content_type="text/csv")
-        response["Content-Disposition"] = f'attachment; filename="{filename}"'
-
-        return response
-
+        return paginated_response
