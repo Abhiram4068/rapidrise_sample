@@ -7,13 +7,13 @@ from rest_framework import status
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError
 from django.http import FileResponse
-from django.core.exceptions import ValidationError
+from django.core.exceptions import ValidationError, PermissionDenied
 from files.serializers import (
     RegisterSerializer, LoginSerializer, UserProfileSerializer,ChangePasswordSerialzier, FileUploadSerialzier, FilesListSerializer, FileUpdateSerializer ,FileShareSerializer, FileShareCreateSerializer, PublicFileSerializer,CollectionSerializer, CollectionFileSerializer
-    ,ScheduledMailSerializer, FileShareListSerializer
+    ,ScheduledMailSerializer, FileShareListSerializer, ReportQuerySerializer
     )
 from files.services import (
-    create_user, get_designation, authenticate_and_generate_token, AuthenticationError ,AuthService, UserProfileService, FileService, FileShareService, ViewFileShareService, CollectionService
+    create_user, get_designation, authenticate_and_generate_token, AuthenticationError ,AuthService, UserProfileService, FileService, FileShareService, ViewFileShareService, CollectionService, ReportService
     )
 from rest_framework.pagination import PageNumberPagination
 
@@ -738,3 +738,58 @@ class CollectionFileView(APIView):
         except ValidationError as e:
             return Response({"detail": e.message}, status=status.HTTP_400_BAD_REQUEST)
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+
+import csv
+from django.http import HttpResponse
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+from django.core.exceptions import PermissionDenied
+from django.http import StreamingHttpResponse
+from datetime import datetime
+
+
+
+
+class ReportDownloadView(APIView):
+    permission_classes = [IsAuthenticated]
+    pagination_class = DefaultPageNumberPagination 
+
+    def get(self, request):
+        # Validate query params
+        serializer = ReportQuerySerializer(data=request.query_params)
+        
+        serializer.is_valid(raise_exception=True)
+
+        download = serializer.validated_data.get("download")
+        timeline = serializer.validated_data.get("timeline")
+        search = serializer.validated_data.get("search", "")
+
+        # Fetch data
+        shares, mails = ReportService.get_queryset(request.user, timeline, search)
+
+        # Build response
+        data = ReportService.build_response_data(shares, mails)
+
+        #dashboard metrics
+        dashboard = ReportService.get_dashboard_metrics(request.user)
+
+        # Download case
+        if download:
+            csv_buffer = ReportService.generate_csv(data)
+
+            response = HttpResponse(
+                csv_buffer.getvalue(),
+                content_type="text/csv"
+            )
+            response["Content-Disposition"] = 'attachment; filename="mail_report.csv"'
+            return response
+        paginator = self.pagination_class()
+        page = paginator.paginate_queryset(data, request, view=self)
+
+        paginated_response = paginator.get_paginated_response(page)
+        paginated_response.data["dashboard"] = dashboard
+
+        return paginated_response

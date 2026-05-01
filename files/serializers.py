@@ -431,3 +431,8 @@ class PublicFileSerializer(serializers.Serializer):
             raise serializers.ValidationError("Share link have expired")
         self.share = share
         return value
+
+class ReportQuerySerializer(serializers.Serializer):
+    download = serializers.BooleanField(required=False, default=False)
+    timeline = serializers.ChoiceField(choices=['weekly', 'monthly'], required=False)
+    search = serializers.CharField(required=False, allow_blank=True, default='')
