@@ -1,7 +1,7 @@
 from django.urls import path
 from files.views import (
-    RegisterView, LoginView, TokenRefreshCookieView,DesignationListView, ChangePasswordView,LogoutView, UserProfileView, FileUploadView, ClearTrash, FileDownloadView, FileListView, FileUpdateView, FileArchiveView,FileDetailView,FileDeleteView, FileShareCreateListUpdateView, PublicFileAccessView,
-    CollectionListCreateView, CollectionDetailView, CollectionFileView, FileStarredList, CollectionStarredList, RecentView, FileShareScheduleCreateListView, FileShareScheduleCalendarView, RevokeScheduledMailView, ReportDownloadView
+    RegisterView, LoginView, TokenRefreshCookieView,DesignationListView, ChangePasswordView,LogoutView, UserProfileView, FileUploadView, ClearTrash, FileDownloadView, FileListView, FileUpdateView, ArchiveFile, FileArchiveView, FileUnarchiveView,FileDetailView,FileDeleteView, FileShareCreateListUpdateView, PublicFileAccessView,
+    CollectionListCreateView, CollectionDetailView, CollectionFileView, FileStarredList, CollectionStarredList, RecentView, FileShareScheduleCreateListView, FileShareScheduleCalendarView, RevokeScheduledMailView, ReportDownloadView, ArchiveDeleteFileView
     )
 """
     app level urls
@@ -26,7 +26,7 @@ urlpatterns=[
     path('files/<uuid:pk>/update/', FileUpdateView.as_view(), name='file-update'),
     path('files/<uuid:pk>/', FileDetailView.as_view(), name='file-detail'),
     path('files/<uuid:file_id>/file-delete/', FileDeleteView.as_view(), name='file-delete'),
-    path('files/<uuid:file_id>/archive/', FileArchiveView.as_view(), name='file-archive'),
+
     path('files/view-recently-deleted/',FileDeleteView.as_view(), name='view-recently-deleted'),
     path('files/clear-trash/<uuid:file_id>/',ClearTrash.as_view(), name='clear-trash'),
     path('files/recents/',RecentView.as_view(), name='recent-files' ),
@@ -55,5 +55,12 @@ urlpatterns=[
 
     #report downloads
     path('report-downloads/', ReportDownloadView.as_view(), name='report-downloads'),
+
+
+    #files archive 
+    path('files/<uuid:file_id>/archive/', FileArchiveView.as_view(), name='file-archive'),
+    path('files/<uuid:file_id>/unarchive/', FileUnarchiveView.as_view(), name='file-unarchive'),
+    path('files/archives/', ArchiveFile.as_view(), name='archives'),
+    path('files/archives/delete/', ArchiveDeleteFileView.as_view(), name='archives-delete'),
     
 ]

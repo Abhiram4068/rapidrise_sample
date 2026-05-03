@@ -355,7 +355,29 @@ class ClearTrash(APIView):
         return Response(
             status=status.HTTP_204_NO_CONTENT
         )
-    
+from django.db.models import Q
+class ArchiveFile(APIView):
+    """
+    view for handling the get method for archived files
+    """
+    permission_classes=[IsAuthenticated]
+    serializer_class=FilesListSerializer
+    pagination_class = DefaultPageNumberPagination
+    def get(self, request):
+        search=request.query_params.get("search", "").strip()
+        archived_files=FileService.get_user_archived_files(
+            user=request.user,
+            search=search
+        )
+        if archived_files.exists():
+            paginator = self.pagination_class()
+            page_qs = paginator.paginate_queryset(archived_files, request, view=self)
+            serializer=self.serializer_class(page_qs, many=True)
+            return paginator.get_paginated_response(serializer.data)
+        return Response({"message":"No archived files found!"}, status=status.HTTP_200_OK)
+
+
+
 class FileArchiveView(APIView):
     """
     View for handling archiving, viewing the archived files and restoring the archived files 
@@ -368,7 +390,47 @@ class FileArchiveView(APIView):
             file_id
         )
         return Response(
-            status=status.HTTP_204_NO_CONTENT)
+            { "message": "File archived successfully"},
+            status=status.HTTP_200_OK)
+
+class FileUnarchiveView(APIView):
+    """
+    view for unarchive archived files
+    """
+    permission_classes=[IsAuthenticated]
+    serializer_class=FilesListSerializer
+    def post(self, request, file_id):
+        FileService.user_unarchive_file(
+            request.user,
+            file_id
+        )
+        return Response(
+            { "message": "File restored successfully"},
+            status=status.HTTP_200_OK)
+
+class ArchiveDeleteFileView(APIView):
+    """
+    View to soft-delete archived files (supports multiple files)
+
+    """
+    permission_classes=[IsAuthenticated]
+    serializer_class=FilesListSerializer
+    def put(self, request):
+        try:
+            updated_count = FileService.delete_archived_files(
+                user=request.user,
+                file_ids=request.data.get('file_ids', [])
+            )
+            return Response(
+                {"message": f"{updated_count} file(s) deleted successfully."},
+                status=status.HTTP_200_OK
+            )
+        except ValueError as e:
+            return Response(
+                {"error": str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
         
         
 class FileStarredList(APIView):

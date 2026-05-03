@@ -233,12 +233,49 @@ class FileService:
             File, user=user, id=file_id, is_deleted=False, is_archive=False
         )
         file_obj.is_archive=True
-        file_obj.save(update_fields=['is_archive'])
+        file_obj.archived_at=timezone.now()
+        file_obj.save(update_fields=['is_archive', 'archived_at'])
+
+    @staticmethod
+    def user_unarchive_file(user, file_id):
+        file_obj=get_object_or_404(
+            File, user=user, id=file_id, is_deleted=False, is_archive=True
+        )
+        file_obj.is_archive=False
+        file_obj.archived_at=None
+        file_obj.save(update_fields=['is_archive', 'archived_at'])
         
     @staticmethod
     def get_user_starred_files(user):
         starred_files=File.objects.filter(user=user, is_starred=True, is_deleted=False)
         return starred_files
+
+    @staticmethod
+    def get_user_archived_files(user, search=None):
+        archived_files=File.objects.filter(user=user, is_archive=True, is_deleted=False)
+        if search:
+            archived_files=archived_files.filter(
+                Q(original_name__icontains=search) |
+                Q(display_name__icontains=search) |
+                Q(content_type__icontains=search)
+        )
+        return archived_files.order_by('-archived_at')
+
+    @staticmethod
+    def delete_archived_files(user, file_ids):
+        if not file_ids or not isinstance(file_ids, list):
+            raise ValueError("Provide a valid list of file_ids.")
+
+        files = File.objects.filter(
+            id__in=file_ids,
+            user=user,
+            is_archive=True
+        )
+
+        if not files.exists():
+            raise ValueError("No matching archived files found.")
+
+        return files.update(is_deleted=True, deleted_at=timezone.now())
 
     @staticmethod
     def get_user_deleted_files(user):
