@@ -162,6 +162,7 @@ class FilesListSerializer(serializers.ModelSerializer):
     updated_at = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", read_only=True)
     file_size = serializers.SerializerMethodField()
     file_url = serializers.SerializerMethodField()
+    status = serializers.SerializerMethodField()
 
     class Meta:
         model=File
@@ -177,7 +178,9 @@ class FilesListSerializer(serializers.ModelSerializer):
             'deleted_at',
             'is_deleted',
             'updated_at',
-            'file_url'
+            'file_url',
+            'archived_at',
+            'status'
         ]
     def get_file_size(self, obj):
         size = obj.file_size or 0 
@@ -199,6 +202,9 @@ class FilesListSerializer(serializers.ModelSerializer):
         if obj.file and request:
             return request.build_absolute_uri(obj.file.url)
         return None
+    def get_status(self, obj):
+        if obj.archived_at:
+            return "Archived"
 
 
 class FileUpdateSerializer(serializers.ModelSerializer):
@@ -436,3 +442,20 @@ class ReportQuerySerializer(serializers.Serializer):
     download = serializers.BooleanField(required=False, default=False)
     timeline = serializers.ChoiceField(choices=['weekly', 'monthly'], required=False)
     search = serializers.CharField(required=False, allow_blank=True, default='')
+
+# class FilesArchiveListSerializer(serializers.Serializer):
+#     total_count = serializers.SerializerMethodField()
+#     class Meta:
+#         model=File
+#         fields=[
+#             'id',
+#             'original_name',
+#             'file_size',
+#             'content_type',
+#             'description',
+#             'created_at',
+#             'display_name'
+#             'updated_at',
+#             'file_url'
+#         ]
+#     def 

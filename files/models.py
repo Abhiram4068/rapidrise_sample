@@ -89,6 +89,7 @@ class File(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     is_deleted = models.BooleanField(default=False)
     is_archive = models.BooleanField(default=False)
+    archived_at = models.DateTimeField(null=True, blank=True)
     is_starred = models.BooleanField(default=False)
     deleted_at = models.DateTimeField(null=True, blank=True)
     display_name = models.CharField(max_length=255, blank=True, null=True)
