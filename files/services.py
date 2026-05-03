@@ -528,7 +528,7 @@ class FileShareService:
         if timezone.now() >= scheduled_mail.scheduled_for:
             raise ValueError("Time has already reached for this scheduled email.")
             
-        scheduled_mail.status = ScheduledMail.Status.CANCELLED
+        scheduled_mail.status = ScheduledMail.Status.REVOKED
         scheduled_mail.save(update_fields=["status"])
         
         if scheduled_mail.task_id:
@@ -554,6 +554,19 @@ class FileShareService:
                     if status_filter and status_filter.lower() != 'all' 
                     else queryset
         }
+
+    @staticmethod
+    def get_scheduled_mails_for_calendar(user, month, year, status_filter=None):
+        queryset = ScheduledMail.objects.filter(
+            share__owner=user,
+            scheduled_for__month=month,
+            scheduled_for__year=year,
+        ).select_related('share', 'share__file', 'share__owner').order_by('scheduled_for')
+
+        if status_filter and status_filter.lower() != 'all':
+            queryset = queryset.filter(status=status_filter.lower())
+
+        return queryset
             
 
 class ViewFileShareService:
