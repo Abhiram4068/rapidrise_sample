@@ -148,7 +148,7 @@ class ScheduledMail(models.Model):
         PENDING = "pending", "Pending"
         SENT = "sent", "Sent"
         FAILED = "failed", "Failed"
-        CANCELLED = "cancelled", "Cancelled"
+        REVOKED = "revoked", "Revoked"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     share = models.ForeignKey(

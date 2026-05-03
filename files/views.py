@@ -551,6 +551,43 @@ class FileShareScheduleCreateListView(APIView):
             status=status.HTTP_200_OK
         )
         
+class FileShareScheduleCalendarView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            month = int(request.query_params.get('month', datetime.now().month))
+            year  = int(request.query_params.get('year',  datetime.now().year))
+        except ValueError:
+            return Response(
+                {"error": "month and year must be integers"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not (1 <= month <= 12):
+            return Response(
+                {"error": "month must be between 1 and 12"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        status_filter = request.query_params.get('status', None)
+        mails = FileShareService.get_scheduled_mails_for_calendar(
+            user=request.user,
+            month=month,
+            year=year,
+            status_filter=status_filter
+        )
+
+        serializer = ScheduledMailSerializer(mails, many=True, context={'request': request})
+        return Response(
+            {
+                "month": month,
+                "year": year,
+                "count": mails.count(),
+                "data": serializer.data
+            },
+            status=status.HTTP_200_OK
+        )
 
 class RevokeScheduledMailView(APIView):
     permission_classes = [IsAuthenticated]
