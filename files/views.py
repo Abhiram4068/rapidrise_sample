@@ -1,3 +1,4 @@
+from files.services import StorageService
 from django.conf import settings
 from django.shortcuts import render
 from rest_framework.views import APIView
@@ -16,6 +17,7 @@ from files.services import (
     create_user, get_designation, authenticate_and_generate_token, AuthenticationError ,AuthService, UserProfileService, FileService, FileShareService, ViewFileShareService, CollectionService, ReportService
     )
 from rest_framework.pagination import PageNumberPagination
+from rest_framework.exceptions import NotFound
 
 
 import logging
@@ -320,6 +322,7 @@ class FileDeleteView(APIView):
     """
     permission_classes=[IsAuthenticated]
     serializer_class=FilesListSerializer
+    pagination_class = DefaultPageNumberPagination
 
     def delete(self, request, file_id):
         FileService.user_delete_file(
@@ -330,9 +333,30 @@ class FileDeleteView(APIView):
     
 
     def get(self, request):
-        deleted_files=FileService.get_user_deleted_files(user=request.user)
-        serializer = self.serializer_class(deleted_files, many=True)
-        return Response(serializer.data)
+        search = request.query_params.get("search", "").strip()
+        deleted_files = FileService.get_user_deleted_files(user=request.user)
+
+        if search:
+            deleted_files = deleted_files.filter(
+                Q(original_name__icontains=search) |
+                Q(description__icontains=search)
+            )
+
+        paginator = self.pagination_class()
+        try:
+            page_qs = paginator.paginate_queryset(deleted_files, request, view=self)
+            serializer = self.serializer_class(page_qs, many=True)
+            return paginator.get_paginated_response(serializer.data)
+        except NotFound:
+            return Response(
+                {
+                    "count": deleted_files.count(),
+                    "next": None,
+                    "previous": None,
+                    "results": []
+                },
+                status=status.HTTP_200_OK
+            )
 
     def post(self, request, file_id):
         FileService.user_restore_file(
@@ -351,10 +375,12 @@ class ClearTrash(APIView):
     serializer_class=FilesListSerializer
     def delete(self, request, file_id): 
         deleted_file=FileService.get_deleted_file_by_id(user=request.user, file_id=file_id)
+        StorageService.release(request.user.id, deleted_file.file_size)
         deleted_file.delete()
         return Response(
             status=status.HTTP_204_NO_CONTENT
         )
+    
 from django.db.models import Q
 class ArchiveFile(APIView):
     """

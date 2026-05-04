@@ -58,7 +58,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
     status = serializers.SerializerMethodField(source="is_active", read_only=True) 
     designation = serializers.SerializerMethodField()
     storage_used_bytes=serializers.SerializerMethodField()
-    storage_used_bytes=serializers.SerializerMethodField()
+    
     class Meta:
         model = User
         fields = ["id", "email", "first_name", "last_name", "designation", "date_joined", "total_files", "date_of_birth", "status", "storage_used_bytes"]
