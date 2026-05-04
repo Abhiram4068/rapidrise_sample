@@ -119,7 +119,7 @@ class StorageService:
             User.objects.filter(
                 id=user_id
             ).update(
-                F("storage_used_bytes")-file_size
+                storage_used_bytes=F("storage_used_bytes")-file_size
             )
 
 
@@ -280,12 +280,12 @@ class FileService:
     @staticmethod
     def get_user_deleted_files(user):
         all_deleted_files=File.objects.filter(user=user, is_deleted=True)
-        return all_deleted_files
+        return all_deleted_files.order_by('-deleted_at')
 
     @staticmethod
     def get_deleted_file_by_id(user, file_id):
         file_obj=get_object_or_404(
-            File, user=user, id=file_id, is_deleted=True, is_archive=False
+            File, user=user, id=file_id, is_deleted=True
         )
         return file_obj
     

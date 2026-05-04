@@ -25,8 +25,7 @@ urlpatterns=[
     path('file-list/', FileListView.as_view(), name='file-list'),
     path('files/<uuid:pk>/update/', FileUpdateView.as_view(), name='file-update'),
     path('files/<uuid:pk>/', FileDetailView.as_view(), name='file-detail'),
-    path('files/<uuid:file_id>/file-delete/', FileDeleteView.as_view(), name='file-delete'),
-
+    path('files/<uuid:file_id>/delete/', FileDeleteView.as_view(), name='file-delete'),
     path('files/view-recently-deleted/',FileDeleteView.as_view(), name='view-recently-deleted'),
     path('files/clear-trash/<uuid:file_id>/',ClearTrash.as_view(), name='clear-trash'),
     path('files/recents/',RecentView.as_view(), name='recent-files' ),
