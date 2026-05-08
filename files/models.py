@@ -93,9 +93,8 @@ class File(models.Model):
     is_starred = models.BooleanField(default=False)
     deleted_at = models.DateTimeField(null=True, blank=True)
     display_name = models.CharField(max_length=255, blank=True, null=True)
-    expires_at = models.DateTimeField(
-        default=default_expiry,
-        db_index=True
+    last_accessed = models.DateTimeField(
+        default=timezone.now
     )
     class Meta:
         db_table = "files"

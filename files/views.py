@@ -1,3 +1,4 @@
+from files.serializers import StorageSummarySerializer
 from files.services import StorageService
 from django.conf import settings
 from django.shortcuts import render
@@ -11,7 +12,7 @@ from django.http import FileResponse
 from django.core.exceptions import ValidationError, PermissionDenied
 from files.serializers import (
     RegisterSerializer, LoginSerializer, UserProfileSerializer,ChangePasswordSerialzier, FileUploadSerialzier, FilesListSerializer, FileUpdateSerializer ,FileShareSerializer, FileShareCreateSerializer, PublicFileSerializer,CollectionSerializer, CollectionFileSerializer
-    ,ScheduledMailSerializer, FileShareListSerializer, ReportQuerySerializer
+    ,ScheduledMailSerializer, FileShareListSerializer, ReportQuerySerializer, ResetPasswordSerializer, ForgotPasswordSerializer
     )
 from files.services import (
     create_user, get_designation, authenticate_and_generate_token, AuthenticationError ,AuthService, UserProfileService, FileService, FileShareService, ViewFileShareService, CollectionService, ReportService
@@ -161,6 +162,39 @@ class LogoutView(APIView):
         _clear_auth_cookies(response)
         return response
 
+class ForgotPasswordView(APIView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = ForgotPasswordSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        # Always return 200 — never reveal if the email exists
+        data=AuthService.request_password_reset(serializer.validated_data["email"])
+        return Response(data)
+
+class ResetPasswordView(APIView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = ResetPasswordSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            AuthService.confirm_password_reset(
+                uid          = serializer.validated_data["uid"],
+                token        = serializer.validated_data["token"],
+                new_password = serializer.validated_data["new_password"],
+            )
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(
+            {"detail": "Password reset successful. You can now log in."},
+            status=status.HTTP_200_OK,
+        )
 class UserProfileView(APIView):
     permission_classes = [IsAuthenticated]
     serializer_class = UserProfileSerializer
@@ -196,47 +230,49 @@ class ChangePasswordView(APIView):
             )
 
 import time
+from rest_framework.exceptions import ValidationError
+
 class FileUploadView(APIView):
-    permission_classes=[IsAuthenticated]
-    
+    permission_classes = [IsAuthenticated]
+
     def post(self, request):
-        
         start_time = time.time()
         logger.info(f"File upload request started | user_id={request.user.id}")
 
-        serializer=FileUploadSerialzier(
+        serializer = FileUploadSerialzier(
             data=request.data,
-            context={'request':request}
-            )
+            context={'request': request}
+        )
         if not serializer.is_valid():
-            return Response(
-                serializer.errors,
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        files=serializer.validated_data['files']
-       
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        files = serializer.validated_data['files']
+        action = request.data.get("action")
+
         try:
             logger.info(f"{len(files)} files received for upload | user_id={request.user.id}")
-            uploaded_files=FileService.upload_files(user=request.user, files=files) 
+            uploaded_files = FileService.upload_files(user=request.user, files=files, action=action)
             duration = time.time() - start_time
             logger.info(
-                f"File upload success | user_id={request.user.id} | count={len(uploaded_files)} | duration={duration}"
+                f"File upload success | user_id={request.user.id} | "
+                f"count={len(uploaded_files)} | duration={duration:.2f}s"
             )
             return Response(
-                {
-                    'message':f'{len(uploaded_files)} files uploaded successfully',
-                    'files':uploaded_files
-                },
+                {'message': f'{len(uploaded_files)} file(s) uploaded successfully', 'files': uploaded_files},
                 status=status.HTTP_201_CREATED
             )
+
+        except ValidationError as e:
+            detail = e.detail
+            # DRF wraps dict values in lists — flatten them back
+            if isinstance(detail, dict):
+                detail = {k: v[0] if isinstance(v, list) and len(v) == 1 else v for k, v in detail.items()}
+            logger.warning(f"Duplicate file detected | user_id={request.user.id} | detail={detail}")
+            return Response(detail, status=status.HTTP_409_CONFLICT)
+
         except Exception as e:
-            logger.error(
-                f"File upload failed | user_id={request.user.id} | error={str(e)}"
-            )
-            return Response(
-                {'error':str(e)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            logger.error(f"File upload failed | user_id={request.user.id} | error={str(e)}")
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 class FileDownloadView(APIView):
     permission_classes=[IsAuthenticated]
     def get(self, request, file_id):
@@ -468,7 +504,8 @@ class FileStarredList(APIView):
     def get(self, request):
         starred_files=FileService.get_user_starred_files(request.user)
         if starred_files.exists():
-            serializer = FilesListSerializer(starred_files, many=True)
+            serializer = FilesListSerializer(starred_files, many=True, context={'request': request})
+            print(serializer.data)
             return Response(serializer.data, status=status.HTTP_200_OK)
         return Response(
             {"message":"No starred files!"},
@@ -499,7 +536,7 @@ class RecentView(APIView):
         recent_files=FileService.get_recent_files(request.user)
         if not recent_files.exists():
             return Response({"message":"No files uploaded yet"}, status=status.HTTP_204_NO_CONTENT)
-        serializer=FilesListSerializer(recent_files, many=True)
+        serializer=FilesListSerializer(recent_files, many=True,  context={'request': request})
         return Response({
             "files":serializer.data
         }, status=status.HTTP_200_OK)
@@ -918,3 +955,23 @@ class ReportDownloadView(APIView):
         paginated_response.data["dashboard"] = dashboard
 
         return paginated_response
+
+
+
+class StorageSummaryView(APIView):
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+
+        summary_data = StorageService.get_storage_summary(
+            user=request.user
+        )
+
+        serializer = StorageSummarySerializer(summary_data)
+
+        return Response(
+            serializer.data,
+            status=status.HTTP_200_OK
+        )
+    
