@@ -19,7 +19,11 @@ from django.contrib.auth import update_session_auth_hash
 from .exceptions import StorageLimitExceeded
 import logging
 logger = logging.getLogger(__name__)
-
+import os
+from datetime import datetime
+from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
+from django.utils.encoding import force_bytes, force_str
+from django.contrib.auth.tokens import default_token_generator
 
 def create_user(validated_data):
     email=validated_data.get('email')
@@ -72,6 +76,68 @@ class AuthService:
         if request:
             update_session_auth_hash(request, user)
         return user
+    @staticmethod
+    def request_password_reset(email):
+        """
+        Looks up the user by email, generates a secure one-time token,
+        and emails them a reset link. Always returns success to prevent
+        user enumeration (don't reveal whether the email exists).
+        """
+        try:
+            print("EMAIL RECEIVED:", email)
+            user = User.objects.get(email=email)
+            print("USER FOUND:", user.email)
+        except User.DoesNotExist:
+            return  # silently do nothing
+
+        uid   = urlsafe_base64_encode(force_bytes(user.pk))
+        token = default_token_generator.make_token(user)
+
+        reset_url = (
+        f"{settings.FRONTEND_URL}"
+        f"/auth/reset-password/confirm/"
+        f"?uid={uid}&token={token}"
+    )
+    
+
+        def _send_email():
+            try:
+                send_mail(
+                    subject="Password Reset Request — HiveDrive",
+                    message=(
+                        f"Hi {user.first_name or user.email},\n\n"
+                        f"Click the link below to reset your password. "
+                        f"This link expires in 24 hours.\n\n"
+                        f"{reset_url}\n\n"
+                        f"If you didn't request this, ignore this email."
+                    ),
+                    from_email=settings.DEFAULT_FROM_EMAIL,
+                    recipient_list=[user.email],
+                    fail_silently=False,
+                )
+            except Exception as e:
+                logger.error(f"Failed to send password reset email: {e}")
+
+        import threading
+        threading.Thread(target=_send_email).start()
+    @staticmethod
+    def confirm_password_reset(uid, token, new_password):
+        """
+        Validates the uid + token pair, then sets the new password.
+        Raises ValueError with a user-friendly message on any failure.
+        """
+        try:
+            user_id = force_str(urlsafe_base64_decode(uid))
+            user    = User.objects.get(pk=user_id)
+        except (User.DoesNotExist, ValueError, TypeError):
+            raise ValueError("Invalid reset link.")
+
+        if not default_token_generator.check_token(user, token):
+            raise ValueError("This reset link has expired or has already been used.")
+
+        user.set_password(new_password)
+        user.save()
+        return user
 
 
 class UserProfileService:
@@ -80,7 +146,10 @@ class UserProfileService:
         return (
             User.objects
             .filter(pk=user.pk)
-            .annotate(total_files=Count("files"))  # related_name
+            .annotate(total_files=Count(
+                "files",
+                filter=Q(files__is_deleted=False)
+                ))  # related_name
             .only("id", "email", "first_name", "last_name", "designation", "date_of_birth")
             .first()
         )
@@ -132,60 +201,82 @@ class FileService:
     user-scoped listing, and soft deletion.
     """
     @staticmethod
-    @transaction.atomic
     
-    def upload_files(user, files:List, description=None):
-        logger.info(f"Starting file processing | user_id={user.id}")
-        uploaded_files=[]
-        
+    def upload_files(user, files: List, description=None, action=None):
+        uploaded_files = []
+
         for file_obj in files:
-            
-            StorageService.claim(user.id, file_obj.size)
-            checksum=FileService._calculate_checksum(file_obj)
-            
-            
-            existing_file=File.objects.filter(checksum=checksum).first()
-            if existing_file:
-                file_instance=File.objects.create(
-                    user=user,
-                    file=existing_file.file,
-                    original_name=file_obj.name,
-                    description=description,
-                    file_size=file_obj.size,
-                    content_type=file_obj.content_type,
-                    checksum=checksum
-                )
-                is_duplicate=True
-            else:
-                file_instance=File.objects.create(
+            with transaction.atomic():
+                StorageService.claim(user.id, file_obj.size)
+                checksum = FileService._calculate_checksum(file_obj)
+                existing_file = File.objects.filter(checksum=checksum, user=user, is_deleted=False).first()
+
+                # Duplicate with no action → ask the frontend what to do
+                if existing_file and not action:
+                    raise ValidationError({
+                        "duplicate": True,
+                        "message": f"File '{file_obj.name}' already exists",
+                        "existing_file_id": str(existing_file.id),
+                        "file_name": file_obj.name,
+                    })
+
+                # Replace
+                if existing_file and action == "replace":
+                    old_path = existing_file.file.name
+                    existing_file.file.delete(save=False)
+                    existing_file.file = file_obj
+                    existing_file.original_name = file_obj.name
+                    existing_file.file_size = file_obj.size
+                    existing_file.content_type = file_obj.content_type
+                    existing_file.save()
+                    logger.info(f"File replaced | user_id={user.id} | old={old_path} | new={file_obj.name}")
+                    uploaded_files.append({
+                        'id': str(existing_file.id),
+                        'name': existing_file.original_name,
+                        'size': existing_file.file_size,
+                        'content_type': existing_file.content_type,
+                        'checksum': existing_file.checksum,
+                        'created_at': existing_file.created_at,
+                    })
+                    continue  # ← was `return`, this lets remaining files still process
+
+                # Keep both
+                if existing_file and action == "keep_both":
+                    file_obj.name = FileService._rename_file(file_obj.name)
+                    logger.info(f"Keeping both | user_id={user.id} | renamed to={file_obj.name}")
+
+                # Fresh upload (or keep_both falls through to here)
+                new_file = File.objects.create(
                     user=user,
                     file=file_obj,
                     original_name=file_obj.name,
-                    description=description,
                     file_size=file_obj.size,
                     content_type=file_obj.content_type,
-                    checksum=checksum
+                    checksum=checksum,
                 )
-                is_duplicate=False
-            logger.debug(
-                f"Processing file | name={file_obj.name} | size={file_obj.size}"
-            )
-            
-            logger.info(
-                f"File saved | file_id={file_instance.id} | user_id={user.id}"
-            )
-            uploaded_files.append({
-                'id':str(file_instance.id),
-                'name':file_instance.original_name,
-                "size": file_instance.file_size,
-                "content_type": file_instance.content_type,
-                "checksum": file_instance.checksum,
-                "created_at": file_instance.created_at
-            })
-        logger.info(f"All files processed successfully | count={len(uploaded_files)}")
-
+                uploaded_files.append({
+                    'id': str(new_file.id),
+                    'name': new_file.original_name,
+                    'size': new_file.file_size,
+                    'content_type': new_file.content_type,
+                    'checksum': new_file.checksum,
+                    'created_at': new_file.created_at,
+                })
 
         return uploaded_files
+
+    
+
+
+    @staticmethod
+    def _rename_file(filename):
+        from django.utils.text import slugify
+        name, ext = os.path.splitext(filename)        # Clean filename
+        safe_name = slugify(name)
+        # Short unique identifier
+        import uuid
+        unique_suffix = uuid.uuid4().hex[:8]
+        return f"{safe_name}_{unique_suffix}{ext.lower()}"
 
     @staticmethod
     def download_file(user, file_id):
@@ -207,8 +298,9 @@ class FileService:
         file_obj=get_object_or_404(
             File, user=user, id=file_id, is_deleted=False, is_archive=False
         )
+        file_obj.last_accessed = timezone.now()
+        file_obj.save(update_fields=['last_accessed'])
         return file_obj
-    
     @staticmethod
     def update_file_details(file_obj, data):
         file_obj.display_name = data.get("display_name", file_obj.display_name)
@@ -248,7 +340,7 @@ class FileService:
     @staticmethod
     def get_user_starred_files(user):
         starred_files=File.objects.filter(user=user, is_starred=True, is_deleted=False)
-        return starred_files
+        return starred_files.order_by('-created_at')
 
     @staticmethod
     def get_user_archived_files(user, search=None):
@@ -307,7 +399,7 @@ class FileService:
     
     @staticmethod
     def get_recent_files(user):
-        return File.objects.filter(user=user, is_deleted=False, is_archive=False).order_by('-created_at')[:6]
+        return File.objects.filter(user=user, is_deleted=False, is_archive=False).order_by('-last_accessed')[:9]
         
 from django.db.models import Sum, Count
 from django.core.exceptions import ValidationError, PermissionDenied
@@ -774,3 +866,198 @@ class ReportService:
 
         buffer.seek(0)
         return buffer
+
+
+CONTENT_TYPE_GROUPS = {
+    "images": [
+        "image/jpeg",
+        "image/png",
+        "image/gif",
+        "image/webp",
+        "image/svg+xml",
+    ],
+    "documents": [
+        "application/pdf",
+        "text/plain",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ],
+    "spreadsheets": [
+        "application/vnd.ms-excel",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "text/csv",
+    ],
+    "archives": [
+        "application/zip",
+        "application/x-rar-compressed",
+        "application/x-tar",
+        "application/gzip",
+    ],
+    "others": [
+        "application/octet-stream",
+        "application/json",
+        "application/xml",
+    ],
+}
+
+class StorageService:
+
+    @staticmethod
+    def format_size(size_bytes):
+        """
+        Convert bytes into human readable format
+        """
+
+        if size_bytes is None:
+            return "0 Bytes"
+
+        units = ["Bytes", "KB", "MB", "GB", "TB"]
+
+        size = float(size_bytes)
+
+        for unit in units:
+
+            if size < 1024:
+                return f"{size:.2f} {unit}"
+
+            size /= 1024
+
+        return f"{size:.2f} PB"
+
+    @staticmethod
+    def calculate_percentage(used, limit):
+        """
+        Calculate storage usage percentage
+        """
+        print(used,limit)
+        if limit == 0:
+            return 0
+
+        return round((used / limit) * 100, 2)
+
+    @staticmethod
+    def is_storage_critical(percentage):
+        """
+        Determine whether storage usage is critical
+        """
+
+        return percentage >= 90
+
+    @staticmethod
+    def get_storage_summary(user):
+        """
+        Get storage dashboard summary data
+        """
+
+        storage_limit = user.storage_limit_bytes or 0
+        storage_used = user.storage_used_bytes or 0
+
+        free_storage = max(storage_limit - storage_used, 0)
+
+        percentage_used = StorageService.calculate_percentage(
+            used=storage_used,
+            limit=storage_limit
+        )
+
+        return {
+            "storage_limit_bytes": storage_limit,
+            "storage_used_bytes": storage_used,
+            "free_storage_bytes": free_storage,
+
+            "storage_limit_human":
+                StorageService.format_size(storage_limit),
+
+            "storage_used_human":
+                StorageService.format_size(storage_used),
+
+            "free_storage_human":
+                StorageService.format_size(free_storage),
+
+            "percentage_used": percentage_used,
+
+            "is_storage_critical":
+                StorageService.is_storage_critical(
+                    percentage_used
+                )
+        }
+    @staticmethod
+    def get_storage_by_content_type(user):
+        """
+        Returns storage used grouped by content type category.
+        Assumes a File model with fields: user, content_type, size
+        """
+        from django.db.models import Sum  # adjust import to your ORM
+
+        result = {}
+
+        for group_name, mime_types in CONTENT_TYPE_GROUPS.items():
+            total = (
+                File.objects                          # replace with your model
+                    .filter(user=user, content_type__in=mime_types)
+                    .aggregate(total=Sum("file_size"))     # replace "size" with your field name
+                ["total"] or 0
+            )
+            result[group_name] = total
+
+        return result
+
+    @staticmethod
+    def get_storage_summary(user):
+        storage_limit = user.storage_limit_bytes or 0
+        storage_used = user.storage_used_bytes or 0
+        free_storage = max(storage_limit - storage_used, 0)
+
+        percentage_used = StorageService.calculate_percentage(
+            used=storage_used,
+            limit=storage_limit
+        )
+
+        # --- new: per-category breakdown ---
+        by_type_bytes = StorageService.get_storage_by_content_type(user)
+
+        by_type = {
+            group: {
+                "bytes": bytes_used,
+                "human": StorageService.format_size(bytes_used),
+                "percentage": StorageService.calculate_percentage(bytes_used, storage_used)  # ← storage_used not storage_limit
+            }
+            for group, bytes_used in by_type_bytes.items()
+        }
+        # ------------------------------------
+
+        return {
+            "storage_limit_bytes": storage_limit,
+            "storage_used_bytes": storage_used,
+            "free_storage_bytes": free_storage,
+            "storage_limit_human": StorageService.format_size(storage_limit),
+            "storage_used_human": StorageService.format_size(storage_used),
+            "free_storage_human": StorageService.format_size(free_storage),
+            "percentage_used": percentage_used,
+            "is_storage_critical": StorageService.is_storage_critical(percentage_used),
+            "storage_by_type": by_type,   # <-- added
+        }
+
+  
+    @staticmethod
+    def claim(user_id, file_size):
+        with transaction.atomic():
+            updated=(
+                User.objects.filter(
+                    id=user_id,
+                    storage_used_bytes__lte=F("storage_limit_bytes")-file_size
+                ).update(
+                    storage_used_bytes=F("storage_used_bytes")+file_size
+                )
+            )
+            if updated == 0:
+                raise StorageLimitExceeded("Storage limit of 1GB exceeded")
+
+    @staticmethod
+    def release(user_id, file_size):
+        with transaction.atomic():
+            User.objects.filter(
+                id=user_id
+            ).update(
+                storage_used_bytes=F("storage_used_bytes")-file_size
+            )

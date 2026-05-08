@@ -1,7 +1,7 @@
 from django.urls import path
 from files.views import (
-    RegisterView, LoginView, TokenRefreshCookieView,DesignationListView, ChangePasswordView,LogoutView, UserProfileView, FileUploadView, ClearTrash, FileDownloadView, FileListView, FileUpdateView, ArchiveFile, FileArchiveView, FileUnarchiveView,FileDetailView,FileDeleteView, FileShareCreateListUpdateView, PublicFileAccessView,
-    CollectionListCreateView, CollectionDetailView, CollectionFileView, FileStarredList, CollectionStarredList, RecentView, FileShareScheduleCreateListView, FileShareScheduleCalendarView, RevokeScheduledMailView, ReportDownloadView, ArchiveDeleteFileView
+    RegisterView, LoginView, TokenRefreshCookieView,DesignationListView, ChangePasswordView,LogoutView, ForgotPasswordView,ResetPasswordView,UserProfileView, FileUploadView, ClearTrash, FileDownloadView, FileListView, FileUpdateView, ArchiveFile, FileArchiveView, FileUnarchiveView,FileDetailView,FileDeleteView, FileShareCreateListUpdateView, PublicFileAccessView,
+    CollectionListCreateView, CollectionDetailView, CollectionFileView, FileStarredList, CollectionStarredList, RecentView, FileShareScheduleCreateListView, FileShareScheduleCalendarView, RevokeScheduledMailView, ReportDownloadView, ArchiveDeleteFileView, StorageSummaryView
     )
 """
     app level urls
@@ -15,6 +15,8 @@ urlpatterns=[
     path('token/refresh/', TokenRefreshCookieView.as_view(), name='token-refresh'),
     path('auth/logout/', LogoutView.as_view(), name='logout'),
     path("designations/", DesignationListView.as_view(), name="designations"),
+    path("auth/forgot-password/",         ForgotPasswordView.as_view()),
+    path("auth/reset-password/confirm/",  ResetPasswordView.as_view()),
     #profile
     path('profile/', UserProfileView.as_view(), name='user-profile'),
     #password change
@@ -61,5 +63,8 @@ urlpatterns=[
     path('files/<uuid:file_id>/unarchive/', FileUnarchiveView.as_view(), name='file-unarchive'),
     path('files/archives/', ArchiveFile.as_view(), name='archives'),
     path('files/archives/delete/', ArchiveDeleteFileView.as_view(), name='archives-delete'),
+
+    #storage
+    path("storage/summary/",StorageSummaryView.as_view(),name="storage-summary"),
     
 ]

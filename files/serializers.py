@@ -47,10 +47,25 @@ class LoginSerializer(serializers.Serializer):
         required=True
     )
     
+class ForgotPasswordSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+    def validate_email(self, value):
+        return value.lower().strip()
     
-    """
-    file upload serializers
-    """
+class ResetPasswordSerializer(serializers.Serializer):
+    uid          = serializers.CharField()
+    token        = serializers.CharField()
+    new_password = serializers.CharField(min_length=8, write_only=True)
+    confirm_password = serializers.CharField(write_only=True)
+
+    def validate(self, data):
+        if data["new_password"] != data["confirm_password"]:
+            raise serializers.ValidationError({"confirm_password": "Passwords do not match."})
+        
+        validate_password(data["new_password"])
+        return data
+
 
 class UserProfileSerializer(serializers.ModelSerializer):
     date_joined = serializers.SerializerMethodField()
@@ -443,19 +458,32 @@ class ReportQuerySerializer(serializers.Serializer):
     timeline = serializers.ChoiceField(choices=['weekly', 'monthly'], required=False)
     search = serializers.CharField(required=False, allow_blank=True, default='')
 
-# class FilesArchiveListSerializer(serializers.Serializer):
-#     total_count = serializers.SerializerMethodField()
-#     class Meta:
-#         model=File
-#         fields=[
-#             'id',
-#             'original_name',
-#             'file_size',
-#             'content_type',
-#             'description',
-#             'created_at',
-#             'display_name'
-#             'updated_at',
-#             'file_url'
-#         ]
-#     def 
+# serializers.py
+
+class StorageByTypeItemSerializer(serializers.Serializer):
+    bytes = serializers.IntegerField()
+    human = serializers.CharField()
+    percentage = serializers.FloatField()
+
+
+class StorageSummarySerializer(serializers.Serializer):
+    storage_limit_bytes = serializers.IntegerField()
+    storage_used_bytes = serializers.IntegerField()
+    free_storage_bytes = serializers.IntegerField()
+
+    storage_limit_human = serializers.CharField()
+    storage_used_human = serializers.CharField()
+    free_storage_human = serializers.CharField()
+
+    percentage_used = serializers.DecimalField(max_digits=5, decimal_places=2)
+    is_storage_critical = serializers.BooleanField()
+
+    # ← removed storage_by_type field declaration from here
+
+    def to_representation(self, instance):
+        rep = super().to_representation(instance)
+        rep["storage_by_type"] = {
+            key: StorageByTypeItemSerializer(val).data
+            for key, val in instance.get("storage_by_type", {}).items()
+        }
+        return rep
