@@ -974,4 +974,45 @@ class StorageSummaryView(APIView):
             serializer.data,
             status=status.HTTP_200_OK
         )
+
+
+class DashboardView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from files.services import DashboardClass
+        data = DashboardClass.get_dashboard_data(request.user)
+        
+        # Serialize active links manually since it's simple
+        active_links_serialized = []
+        for link in data['active_links']:
+            active_links_serialized.append({
+                "id": str(link.id),
+                "title": f"hivedrive.io/s/{link.share_token[:6]}", # simulate shortened link
+                "expiry": f"Expires on {link.expiration_datetime.strftime('%b %d')}",
+                "clicks": 0, # Placeholder if no clicks field
+                "active": link.is_active,
+                "share_token": link.share_token
+            })
+            
+        recent_activities_serialized = []
+        for act in data['recent_activities']:
+            # time formatting
+            time_str = act["time"].strftime('%b %d')
+            recent_activities_serialized.append({
+                "id": act["id"],
+                "icon": act["icon"],
+                "title": act["title"],
+                "sub": act["sub"],
+                "time": time_str
+            })
+            
+        response_data = {
+            "kpi": data["kpi"],
+            "storage_summary": data["storage_summary"],
+            "active_links": active_links_serialized,
+            "recent_activities": recent_activities_serialized
+        }
+        
+        return Response(response_data, status=status.HTTP_200_OK)
     

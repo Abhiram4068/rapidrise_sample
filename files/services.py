@@ -1061,3 +1061,93 @@ class StorageService:
             ).update(
                 storage_used_bytes=F("storage_used_bytes")-file_size
             )
+
+
+class DashboardClass:
+    @staticmethod
+    def get_dashboard_data(user):
+        now = timezone.now()
+        
+        # Total Sent
+        total_sent = FileShareLink.objects.filter(owner=user).count()
+        
+        # Shared Contacts
+        shared_contacts = FileShareLink.objects.filter(owner=user).values('recipient_email').distinct().count()
+        
+        # Next Report In (using next scheduled mail)
+        next_schedule = ScheduledMail.objects.filter(
+            share__owner=user,
+            status=ScheduledMail.Status.PENDING,
+            scheduled_for__gt=now
+        ).order_by("scheduled_for").first()
+        
+        next_report_days = (next_schedule.scheduled_for - now).days if next_schedule else None
+        
+        # Monthly Reach (Growth in shares)
+        last_month = now - timedelta(days=30)
+        two_months_ago = now - timedelta(days=60)
+        
+        shares_this_month = FileShareLink.objects.filter(owner=user, created_at__gte=last_month).count()
+        shares_last_month = FileShareLink.objects.filter(owner=user, created_at__gte=two_months_ago, created_at__lt=last_month).count()
+        
+        if shares_last_month == 0:
+            monthly_reach = f"+{shares_this_month * 100}%" if shares_this_month > 0 else "0%"
+        else:
+            growth = ((shares_this_month - shares_last_month) / shares_last_month) * 100
+            monthly_reach = f"+{int(growth)}%" if growth > 0 else f"{int(growth)}%"
+            
+        # Total Files
+        total_files = File.objects.filter(user=user, is_deleted=False).count()
+            
+        # Active Shared Links (top 3)
+        active_links = FileShareLink.objects.filter(
+            owner=user,
+            accessed=False,
+            expiration_datetime__gt=now
+        ).select_related('file').order_by('-created_at')[:3]
+        
+        # Recent Activities (combining recently uploaded files and shares)
+        # For simplicity, we just fetch latest files and latest shares
+        recent_files = File.objects.filter(user=user, is_deleted=False).order_by('-created_at')[:5]
+        
+        activities = []
+        for f in recent_files:
+            activities.append({
+                "type": "file",
+                "id": str(f.id),
+                "title": f.original_name,
+                "icon": "fa-file",
+                "sub": f"{f.content_type} • Uploaded",
+                "time": f.created_at,
+                "is_active": True
+            })
+            
+        recent_shares = FileShareLink.objects.filter(owner=user).select_related('file').order_by('-created_at')[:5]
+        for s in recent_shares:
+            activities.append({
+                "type": "share",
+                "id": str(s.id),
+                "title": s.file.original_name,
+                "icon": "fa-share-nodes",
+                "sub": f"Shared with {s.recipient_email}",
+                "time": s.created_at,
+                "is_active": True
+            })
+            
+        activities.sort(key=lambda x: x["time"], reverse=True)
+        recent_activities = activities[:4] # Take top 4
+        
+        storage_summary = StorageService.get_storage_summary(user)
+        
+        return {
+            "kpi": {
+                "total_sent": total_sent,
+                "shared_contacts": shared_contacts,
+                "next_report_days": next_report_days,
+                "monthly_reach": monthly_reach,
+                "total_files": total_files
+            },
+            "active_links": active_links,
+            "recent_activities": recent_activities,
+            "storage_summary": storage_summary
+        }
