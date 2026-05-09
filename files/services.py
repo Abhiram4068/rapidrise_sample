@@ -1151,3 +1151,92 @@ class DashboardClass:
             "recent_activities": recent_activities,
             "storage_summary": storage_summary
         }
+
+class StorageManagementService:
+    @staticmethod
+    def get_files_by_category(user, category, search="", sort_by="-file_size"):
+        files = File.objects.filter(user=user, is_deleted=False)
+        if search:
+            files = files.filter(Q(original_name__icontains=search) | Q(description__icontains=search))
+            
+        if category and category.lower() != "all":
+            category_lower = category.lower()
+            if category_lower == "videos": # mapped to others or handled specifically if needed, but CONTENT_TYPE_GROUPS doesn't have videos.
+                # Let's add video mimes to others or define it
+                pass
+            
+            if category_lower == "others":
+                all_known_mimes = []
+                for k, v in CONTENT_TYPE_GROUPS.items():
+                    if k != "others":
+                        all_known_mimes.extend(v)
+                files = files.exclude(content_type__in=all_known_mimes)
+            elif category_lower in CONTENT_TYPE_GROUPS:
+                mime_types = CONTENT_TYPE_GROUPS[category_lower]
+                files = files.filter(content_type__in=mime_types)
+                
+        if sort_by:
+            if sort_by == 'size':
+                files = files.order_by('file_size')
+            elif sort_by == '-size':
+                files = files.order_by('-file_size')
+            else:
+                files = files.order_by(sort_by)
+        else:
+            files = files.order_by("-file_size")
+            
+        return files
+        
+    @staticmethod
+    def get_duplicate_files(user, search="", sort_by="-file_size"):
+        from django.db.models import Count
+        duplicates = File.objects.filter(user=user, is_deleted=False).values('checksum').annotate(count=Count('id')).filter(count__gt=1)
+        checksums = [d['checksum'] for d in duplicates]
+        
+        files = File.objects.filter(user=user, checksum__in=checksums, is_deleted=False)
+        if search:
+            files = files.filter(original_name__icontains=search)
+            
+        if sort_by == 'size':
+            files = files.order_by('checksum', 'file_size')
+        elif sort_by == '-size':
+            files = files.order_by('checksum', '-file_size')
+        else:
+            files = files.order_by('checksum', '-created_at')
+            
+        return files
+        
+    @staticmethod
+    def get_old_files(user, search="", sort_by="last_accessed"):
+        from django.utils import timezone
+        import datetime
+        six_months_ago = timezone.now() - datetime.timedelta(days=180)
+        files = File.objects.filter(user=user, is_deleted=False, last_accessed__lt=six_months_ago)
+        if search:
+            files = files.filter(original_name__icontains=search)
+            
+        if sort_by == 'size':
+            files = files.order_by('file_size')
+        elif sort_by == '-size':
+            files = files.order_by('-file_size')
+        else:
+            files = files.order_by('last_accessed')
+            
+        return files
+        
+    @staticmethod
+    def permanent_delete_files(user, file_ids):
+        files = File.objects.filter(user=user, id__in=file_ids)
+        total_freed = 0
+        for f in files:
+            if not f.is_deleted:
+                # If it's already soft deleted, it might still take quota unless ClearTrash was called. 
+                # Actually ClearTrash deletes the object entirely. So if it exists, it's taking quota.
+                pass
+            total_freed += f.file_size
+            f.delete() # hard delete
+            
+        if total_freed > 0:
+            StorageService.release(user.id, total_freed)
+            
+        return total_freed

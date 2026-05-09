@@ -1,7 +1,7 @@
 from django.urls import path
 from files.views import (
     RegisterView, LoginView, TokenRefreshCookieView,DesignationListView, ChangePasswordView,LogoutView, ForgotPasswordView,ResetPasswordView,UserProfileView, FileUploadView, ClearTrash, FileDownloadView, FileListView, FileUpdateView, ArchiveFile, FileArchiveView, FileUnarchiveView,FileDetailView,FileDeleteView, FileShareCreateListUpdateView, PublicFileAccessView,
-    CollectionListCreateView, CollectionDetailView, CollectionFileView, FileStarredList, CollectionStarredList, RecentView, FileShareScheduleCreateListView, FileShareScheduleCalendarView, RevokeScheduledMailView, ReportDownloadView, ArchiveDeleteFileView, StorageSummaryView, DashboardView
+    CollectionListCreateView, CollectionDetailView, CollectionFileView, FileStarredList, CollectionStarredList, RecentView, FileShareScheduleCreateListView, FileShareScheduleCalendarView, RevokeScheduledMailView, ReportDownloadView, ArchiveDeleteFileView, StorageSummaryView, DashboardView, StorageManagementView, StoragePermanentDeleteView
     )
 """
     app level urls
@@ -66,6 +66,8 @@ urlpatterns=[
 
     #storage
     path("storage/summary/",StorageSummaryView.as_view(),name="storage-summary"),
+    path("storage/manage/", StorageManagementView.as_view(), name="storage-manage"),
+    path("storage/permanent-delete/", StoragePermanentDeleteView.as_view(), name="storage-permanent-delete"),
     
     #dashboard
     path("dashboard/", DashboardView.as_view(), name="dashboard"),

@@ -142,13 +142,25 @@ class TokenRefreshCookieView(APIView):
         try:
             refresh = RefreshToken(refresh_token)
             access = str(refresh.access_token)
+            user_id = refresh.payload.get('user_id')
         except TokenError:
             return Response(
                 {"detail": "Invalid refresh token"},
                 status=status.HTTP_401_UNAUTHORIZED,
             )
 
-        response = Response({"message": "Token refreshed"}, status=status.HTTP_200_OK)
+        user_data = {"authenticated": True}
+        if user_id:
+            try:
+                from django.contrib.auth import get_user_model
+                User = get_user_model()
+                user = User.objects.get(id=user_id)
+                user_data = UserProfileSerializer(user, context={"request": request}).data
+                user_data["authenticated"] = True
+            except Exception:
+                pass
+
+        response = Response({"message": "Token refreshed", "user": user_data}, status=status.HTTP_200_OK)
         _set_auth_cookies(response, access)
         return response
 
@@ -1016,3 +1028,43 @@ class DashboardView(APIView):
         
         return Response(response_data, status=status.HTTP_200_OK)
     
+class StorageManagementView(APIView):
+    permission_classes = [IsAuthenticated]
+    pagination_class = DefaultPageNumberPagination
+
+    def get(self, request):
+        from files.services import StorageManagementService
+        
+        filter_type = request.query_params.get('filter_type', 'category') # category, duplicates, old
+        category = request.query_params.get('category', 'All')
+        search = request.query_params.get('search', '')
+        sort_by = request.query_params.get('sort_by', '-size')
+        
+        if filter_type == 'duplicates':
+            files = StorageManagementService.get_duplicate_files(request.user, search, sort_by)
+        elif filter_type == 'old':
+            files = StorageManagementService.get_old_files(request.user, search, sort_by)
+        else:
+            files = StorageManagementService.get_files_by_category(request.user, category, search, sort_by)
+            
+        paginator = self.pagination_class()
+        page_qs = paginator.paginate_queryset(files, request, view=self)
+        serializer = FilesListSerializer(page_qs, many=True, context={'request': request})
+        
+        return paginator.get_paginated_response(serializer.data)
+
+class StoragePermanentDeleteView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from files.services import StorageManagementService
+        
+        file_ids = request.data.get('file_ids', [])
+        if not file_ids:
+            return Response({"error": "No file_ids provided"}, status=status.HTTP_400_BAD_REQUEST)
+            
+        try:
+            total_freed = StorageManagementService.permanent_delete_files(request.user, file_ids)
+            return Response({"message": f"Successfully deleted {len(file_ids)} files. Freed {total_freed} bytes."}, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
