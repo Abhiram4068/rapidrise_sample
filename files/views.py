@@ -1068,3 +1068,309 @@ class StoragePermanentDeleteView(APIView):
             return Response({"message": f"Successfully deleted {len(file_ids)} files. Freed {total_freed} bytes."}, status=status.HTTP_200_OK)
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+
+
+
+"""
+views.py — request/response only. All logic delegated to services.
+
+URL structure:
+    /api/threads/                           GET, POST
+    /api/threads/<id>/                      GET, PUT, DELETE
+    /api/threads/<id>/graph/                GET  (ReactFlow payload)
+    /api/threads/<thread_id>/nodes/         GET, POST
+    /api/nodes/<id>/                        GET, PUT, DELETE
+    /api/nodes/<id>/branch/                 POST
+    /api/nodes/<id>/position/               PATCH  (drag on canvas)
+    /api/nodes/<id>/dependencies/           GET, POST
+    /api/dependencies/<id>/                 DELETE
+    /api/nodes/<id>/files/                  GET, POST
+    /api/files/<id>/                        DELETE
+    /api/nodes/<id>/activity/              GET
+"""
+
+from rest_framework import status
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
+from .models import NodeDependency, NodeFile, ProjectNode, ProjectThread, NodeActivity
+from .serializers import (
+    DependencySerializer,
+    GraphEdgeSerializer,
+    GraphNodeSerializer,
+    NodeActivitySerializer,
+    NodeCreateSerializer,
+    NodeFileSerializer,
+    NodeFileUploadSerializer,
+    NodeSerializer,
+    NodeUpdateSerializer,
+    ThreadCreateSerializer,
+    ThreadSerializer,
+)
+from .services import DependencyService, FileService, NodeService, ThreadService
+
+
+# ─── Thread ───────────────────────────────────────────────────────────────────
+
+class ThreadListCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        threads = ProjectThread.objects.filter(created_by=request.user)
+        return Response(ThreadSerializer(threads, many=True).data)
+
+    def post(self, request):
+        serializer = ThreadCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        thread = ThreadService.create(request.user, serializer.validated_data)
+        return Response(ThreadSerializer(thread).data, status=status.HTTP_201_CREATED)
+
+
+class ThreadDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def _get_thread(self, pk, user):
+        try:
+            return ProjectThread.objects.get(pk=pk, created_by=user)
+        except ProjectThread.DoesNotExist:
+            return None
+
+    def get(self, request, pk):
+        thread = self._get_thread(pk, request.user)
+        if not thread:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        return Response(ThreadSerializer(thread).data)
+
+    def put(self, request, pk):
+        thread = self._get_thread(pk, request.user)
+        if not thread:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        serializer = ThreadCreateSerializer(thread, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(ThreadSerializer(thread).data)
+
+    def delete(self, request, pk):
+        thread = self._get_thread(pk, request.user)
+        if not thread:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        thread.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class ThreadGraphView(APIView):
+    """Returns all nodes + edges shaped for ReactFlow."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        try:
+            ProjectThread.objects.get(pk=pk, created_by=request.user)
+        except ProjectThread.DoesNotExist:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        graph = ThreadService.get_graph(pk)
+        return Response({
+            "nodes": GraphNodeSerializer(graph["nodes"], many=True).data,
+            "edges": GraphEdgeSerializer(graph["edges"], many=True).data,
+        })
+
+
+# ─── Node ─────────────────────────────────────────────────────────────────────
+
+class NodeListCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def _get_thread(self, thread_id, user):
+        try:
+            return ProjectThread.objects.get(pk=thread_id, created_by=user)
+        except ProjectThread.DoesNotExist:
+            return None
+
+    def get(self, request, thread_id):
+        thread = self._get_thread(thread_id, request.user)
+        if not thread:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        nodes = ProjectNode.objects.filter(thread=thread, is_deleted=False)
+        return Response(NodeSerializer(nodes, many=True).data)
+
+    def post(self, request, thread_id):
+        thread = self._get_thread(thread_id, request.user)
+        if not thread:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        serializer = NodeCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        node = NodeService.add_node(thread, request.user, serializer.validated_data)
+        return Response(NodeSerializer(node).data, status=status.HTTP_201_CREATED)
+
+
+class NodeDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def _get_node(self, pk, user):
+        try:
+            return ProjectNode.objects.get(pk=pk, thread__created_by=user, is_deleted=False)
+        except ProjectNode.DoesNotExist:
+            return None
+
+    def get(self, request, pk):
+        node = self._get_node(pk, request.user)
+        if not node:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        return Response(NodeSerializer(node).data)
+
+    def put(self, request, pk):
+        node = self._get_node(pk, request.user)
+        if not node:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        serializer = NodeUpdateSerializer(data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        node = NodeService.update_node(node, request.user, serializer.validated_data)
+        return Response(NodeSerializer(node).data)
+
+    def delete(self, request, pk):
+        node = self._get_node(pk, request.user)
+        if not node:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        NodeService.soft_delete(node, request.user)
+        return Response({"detail": "Node archived."}, status=status.HTTP_200_OK)
+
+
+class NodeBranchView(APIView):
+    """POST /api/nodes/<id>/branch/ — create a branch diverging from this node."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        try:
+            parent = ProjectNode.objects.get(pk=pk, thread__created_by=request.user, is_deleted=False)
+        except ProjectNode.DoesNotExist:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = NodeCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        node = NodeService.add_branch(parent.thread, request.user, parent, serializer.validated_data)
+        return Response(NodeSerializer(node).data, status=status.HTTP_201_CREATED)
+
+
+class NodePositionView(APIView):
+    """PATCH /api/nodes/<id>/position/ — update canvas position after drag."""
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, pk):
+        try:
+            node = ProjectNode.objects.get(pk=pk, thread__created_by=request.user, is_deleted=False)
+        except ProjectNode.DoesNotExist:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        x = request.data.get("position_x")
+        y = request.data.get("position_y")
+        if x is None or y is None:
+            return Response({"detail": "position_x and position_y required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        NodeService.update_position(node, float(x), float(y))
+        return Response({"position_x": node.position_x, "position_y": node.position_y})
+
+
+# ─── Dependencies ─────────────────────────────────────────────────────────────
+
+class DependencyListCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, node_id):
+        try:
+            node = ProjectNode.objects.get(pk=node_id, thread__created_by=request.user)
+        except ProjectNode.DoesNotExist:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        deps = NodeDependency.objects.filter(source_node=node) | NodeDependency.objects.filter(target_node=node)
+        return Response(DependencySerializer(deps, many=True).data)
+
+    def post(self, request, node_id):
+        try:
+            source = ProjectNode.objects.get(pk=node_id, thread__created_by=request.user, is_deleted=False)
+        except ProjectNode.DoesNotExist:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = DependencySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        target_id = serializer.validated_data["target_node"].id
+        try:
+            target = ProjectNode.objects.get(pk=target_id, is_deleted=False)
+        except ProjectNode.DoesNotExist:
+            return Response({"detail": "Target node not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        dep = DependencyService.add_dependency(
+            source, target,
+            serializer.validated_data.get("dependency_type", NodeDependency.DependencyType.BLOCKS),
+            request.user,
+        )
+        return Response(DependencySerializer(dep).data, status=status.HTTP_201_CREATED)
+
+
+class DependencyDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, pk):
+        try:
+            dep = NodeDependency.objects.get(pk=pk, source_node__thread__created_by=request.user)
+        except NodeDependency.DoesNotExist:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        DependencyService.remove_dependency(dep)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# ─── Files ────────────────────────────────────────────────────────────────────
+
+class NodeFileListCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, node_id):
+        try:
+            node = ProjectNode.objects.get(pk=node_id, thread__created_by=request.user, is_deleted=False)
+        except ProjectNode.DoesNotExist:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        files = NodeFile.objects.filter(node=node)
+        return Response(NodeFileSerializer(files, many=True, context={"request": request}).data)
+
+    def post(self, request, node_id):
+        try:
+            node = ProjectNode.objects.get(pk=node_id, thread__created_by=request.user, is_deleted=False)
+        except ProjectNode.DoesNotExist:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = NodeFileUploadSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        node_file = FileService.upload(node, request.user, serializer.validated_data["file"])
+        return Response(
+            NodeFileSerializer(node_file, context={"request": request}).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class NodeFileDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, pk):
+        try:
+            node_file = NodeFile.objects.get(pk=pk, node__thread__created_by=request.user)
+        except NodeFile.DoesNotExist:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        FileService.delete_file(node_file, request.user)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# ─── Activity ─────────────────────────────────────────────────────────────────
+
+class NodeActivityView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, node_id):
+        try:
+            node = ProjectNode.objects.get(pk=node_id, thread__created_by=request.user)
+        except ProjectNode.DoesNotExist:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        activities = NodeActivity.objects.filter(node=node)
+        return Response(NodeActivitySerializer(activities, many=True).data)

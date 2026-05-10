@@ -487,3 +487,181 @@ class StorageSummarySerializer(serializers.Serializer):
             for key, val in instance.get("storage_by_type", {}).items()
         }
         return rep
+
+
+
+from rest_framework import serializers
+from .models import ProjectThread, ProjectNode, NodeDependency, NodeFile, NodeActivity
+
+
+# ─── Thread ───────────────────────────────────────────────────────────────────
+
+class ThreadSerializer(serializers.ModelSerializer):
+    created_by = serializers.StringRelatedField(read_only=True)
+    node_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ProjectThread
+        fields = ["id", "title", "description", "created_by", "created_at", "node_count"]
+        read_only_fields = ["id", "created_by", "created_at"]
+
+    def get_node_count(self, obj):
+        return obj.nodes.filter(is_deleted=False).count()
+
+
+class ThreadCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProjectThread
+        fields = ["title", "description"]
+
+
+# ─── Node ─────────────────────────────────────────────────────────────────────
+
+class NodeSerializer(serializers.ModelSerializer):
+    created_by = serializers.StringRelatedField(read_only=True)
+    parent_node_id = serializers.PrimaryKeyRelatedField(
+        source="parent_node",
+        queryset=ProjectNode.objects.all(),
+        allow_null=True,
+        required=False,
+    )
+    branch_root_id = serializers.PrimaryKeyRelatedField(
+        source="branch_root",
+        queryset=ProjectNode.objects.all(),
+        allow_null=True,
+        required=False,
+    )
+    file_count = serializers.SerializerMethodField()
+    is_branch = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ProjectNode
+        fields = [
+            "id", "thread", "title", "description", "status",
+            "parent_node_id", "branch_root_id",
+            "position_x", "position_y",
+            "created_by", "created_at", "updated_at",
+            "is_deleted", "file_count", "is_branch",
+        ]
+        read_only_fields = ["id", "thread", "created_by", "created_at", "updated_at", "is_deleted"]
+
+    def get_file_count(self, obj):
+        return obj.files.count()
+
+    def get_is_branch(self, obj):
+        return obj.branch_root_id is not None
+
+
+class NodeCreateSerializer(serializers.ModelSerializer):
+    parent_node_id = serializers.PrimaryKeyRelatedField(
+        source="parent_node",
+        queryset=ProjectNode.objects.all(),
+        allow_null=True,
+        required=False,
+    )
+    branch_root_id = serializers.PrimaryKeyRelatedField(
+        source="branch_root",
+        queryset=ProjectNode.objects.all(),
+        allow_null=True,
+        required=False,
+    )
+
+    class Meta:
+        model = ProjectNode
+        fields = ["title", "description", "parent_node_id", "branch_root_id", "position_x", "position_y"]
+
+
+class NodeUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProjectNode
+        fields = ["title", "description", "status", "position_x", "position_y"]
+
+
+# ─── Dependency ───────────────────────────────────────────────────────────────
+
+class DependencySerializer(serializers.ModelSerializer):
+    source_node_title = serializers.CharField(source="source_node.title", read_only=True)
+    target_node_title = serializers.CharField(source="target_node.title", read_only=True)
+
+    class Meta:
+        model = NodeDependency
+        fields = [
+            "id", "source_node", "target_node",
+            "source_node_title", "target_node_title",
+            "dependency_type", "created_at",
+        ]
+        read_only_fields = ["id", "created_at"]
+
+    def validate(self, data):
+        if data["source_node"] == data["target_node"]:
+            raise serializers.ValidationError("A node cannot depend on itself.")
+        return data
+
+
+# ─── File ─────────────────────────────────────────────────────────────────────
+
+class NodeFileSerializer(serializers.ModelSerializer):
+    uploaded_by = serializers.StringRelatedField(read_only=True)
+    file_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = NodeFile
+        fields = ["id", "node", "file", "original_name", "uploaded_by", "created_at", "file_url"]
+        read_only_fields = ["id", "node", "original_name", "uploaded_by", "created_at"]
+
+    def get_file_url(self, obj):
+        request = self.context.get("request")
+        if request:
+            return request.build_absolute_uri(obj.file.url)
+        return obj.file.url
+
+
+class NodeFileUploadSerializer(serializers.Serializer):
+    file = serializers.FileField()
+
+    def validate_file(self, value):
+        max_size_mb = 50
+        if value.size > max_size_mb * 1024 * 1024:
+            raise serializers.ValidationError(f"File size must not exceed {max_size_mb} MB.")
+        return value
+
+
+# ─── Activity ─────────────────────────────────────────────────────────────────
+
+class NodeActivitySerializer(serializers.ModelSerializer):
+    actor = serializers.StringRelatedField(read_only=True)
+
+    class Meta:
+        model = NodeActivity
+        fields = ["id", "node", "actor", "event_type", "message", "created_at"]
+        read_only_fields = ["id", "node", "actor", "event_type", "message", "created_at"]
+
+
+# ─── Graph (combined payload for canvas) ──────────────────────────────────────
+
+class GraphNodeSerializer(serializers.ModelSerializer):
+    """Slim node shape consumed by ReactFlow."""
+    is_branch = serializers.SerializerMethodField()
+    file_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ProjectNode
+        fields = [
+            "id", "title", "description", "status",
+            "parent_node", "branch_root",
+            "position_x", "position_y",
+            "is_branch", "file_count",
+        ]
+
+    def get_is_branch(self, obj):
+        return obj.branch_root_id is not None
+
+    def get_file_count(self, obj):
+        return obj.files.count()
+
+
+class GraphEdgeSerializer(serializers.ModelSerializer):
+    """Slim dependency shape consumed by ReactFlow."""
+    class Meta:
+        model = NodeDependency
+        fields = ["id", "source_node", "target_node", "dependency_type"]
