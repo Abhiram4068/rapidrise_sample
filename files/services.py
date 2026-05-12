@@ -1540,6 +1540,7 @@ class DependencyService:
  
     @staticmethod
     def add_dependency(source: ProjectNode, target: ProjectNode, dependency_type: str, user) -> NodeDependency:
+
         if DependencyService._has_cycle(source.id, target.id):
             raise ValidationError("Adding this dependency would create a circular reference.")
         if source.status==ProjectNode.Status.INACTIVE or source.status==ProjectNode.Status.BLOCKED:
@@ -1552,6 +1553,8 @@ class DependencyService:
         )
         if not created:
             raise ValidationError("This dependency already exists.")
+        target.status=ProjectNode.Status.ACTIVE
+        target.save(update_fields=["status"])
         DependencyService._restore_downstream(target, user)
         NodeActivity.objects.create(
             node=source,
