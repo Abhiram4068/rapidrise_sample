@@ -1264,13 +1264,13 @@ class NodePositionView(APIView):
         except ProjectNode.DoesNotExist:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        x = request.data.get("position_x")
-        y = request.data.get("position_y")
-        if x is None or y is None:
-            return Response({"detail": "position_x and position_y required."}, status=status.HTTP_400_BAD_REQUEST)
+        stage = request.data.get("stage")
+        row = request.data.get("row")
+        if stage is None or row is None:
+            return Response({"detail": "stage and row required."}, status=status.HTTP_400_BAD_REQUEST)
 
-        NodeService.update_position(node, float(x), float(y))
-        return Response({"position_x": node.position_x, "position_y": node.position_y})
+        NodeService.update_position(node, int(stage), int(row))
+        return Response({"stage": node.stage, "row": node.row})
 
 
 # ─── Dependencies ─────────────────────────────────────────────────────────────
@@ -1304,7 +1304,7 @@ class DependencyListCreateView(APIView):
 
         dep = DependencyService.add_dependency(
             source, target,
-            serializer.validated_data.get("dependency_type", NodeDependency.DependencyType.BLOCKS),
+            serializer.validated_data.get("dependency_type", NodeDependency.DependencyType.DEPENDS_ON),
             request.user,
         )
         return Response(DependencySerializer(dep).data, status=status.HTTP_201_CREATED)
@@ -1313,12 +1313,30 @@ class DependencyListCreateView(APIView):
 class DependencyDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
+    def patch(self, request, pk):
+        try:
+            dep = NodeDependency.objects.get(pk=pk, source_node__thread__created_by=request.user)
+        except NodeDependency.DoesNotExist:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+            
+        dependency_type = request.data.get("dependency_type")
+        if not dependency_type:
+            return Response({"detail": "dependency_type is required."}, status=status.HTTP_400_BAD_REQUEST)
+            
+        from django.core.exceptions import ValidationError
+        try:
+            dep = DependencyService.update_dependency(dep, dependency_type, request.user)
+        except ValidationError as e:
+            return Response({"detail": e.message}, status=status.HTTP_400_BAD_REQUEST)
+            
+        return Response(DependencySerializer(dep).data)
+
     def delete(self, request, pk):
         try:
             dep = NodeDependency.objects.get(pk=pk, source_node__thread__created_by=request.user)
         except NodeDependency.DoesNotExist:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
-        DependencyService.remove_dependency(dep)
+        DependencyService.remove_dependency(dep, request.user)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 

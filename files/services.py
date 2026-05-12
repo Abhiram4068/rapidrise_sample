@@ -431,6 +431,15 @@ class FileService:
         Walk downstream and mark nodes that need review.
         Synchronous BFS — replace with Celery later.
         """
+        source_node.status = ProjectNode.Status.NEEDS_REVIEW
+        source_node.save(update_fields=["status"])
+
+        NodeActivity.objects.create(
+            node=source_node,
+            actor=user,
+            event_type=NodeActivity.EventType.STATUS_CHANGED,
+            message=f'Marked as NEEDS_REVIEW because dependency structure changed.',
+        )
         queue = list(
             NodeDependency.objects.filter(source_node=source_node).values_list("target_node_id", flat=True)
         )
@@ -468,6 +477,7 @@ class FileService:
         node = node_file.node
         node_file.file.delete(save=False)
         node_file.delete()
+        FileService._propagate_impact(node, user)
         NodeActivity.objects.create(
             node=node,
             actor=user,
@@ -1337,8 +1347,9 @@ class ThreadService:
                 title=thread.title,
                 description="Project root node",
                 created_by=user,
-                position_x=100,
-                position_y=200,
+                stage=0,
+                row=0,
+                status="ACTIVE"
             )
             NodeActivity.objects.create(
                 node=root,
@@ -1369,9 +1380,9 @@ class NodeService:
         """Create a child node and log the activity."""
         # Auto-position: offset from parent if given
         parent = validated_data.get("parent_node")
-        if parent and not validated_data.get("position_x"):
-            validated_data["position_x"] = parent.position_x + 280
-            validated_data["position_y"] = parent.position_y
+        if parent and not validated_data.get("stage"):
+            validated_data["stage"] = parent.stage + 1
+            validated_data["row"] = 0
  
         node = ProjectNode.objects.create(thread=thread, created_by=user, **validated_data)
         NodeActivity.objects.create(
@@ -1387,10 +1398,10 @@ class NodeService:
         """Create a branch node diverging from parent_node."""
         validated_data["parent_node"] = parent_node
         validated_data["branch_root"] = parent_node
-        # Branches render below the main chain — offset on Y
-        validated_data["position_x"] = parent_node.position_x + 280
+        # Branches offset on stage/row
+        validated_data["stage"] = parent_node.stage + 1
         sibling_count = ProjectNode.objects.filter(branch_root=parent_node).count()
-        validated_data["position_y"] = parent_node.position_y + (sibling_count + 1) * 120
+        validated_data["row"] = sibling_count + 1
  
         node = ProjectNode.objects.create(thread=thread, created_by=user, **validated_data)
         NodeActivity.objects.create(
@@ -1426,20 +1437,31 @@ class NodeService:
  
     @staticmethod
     def soft_delete(node: ProjectNode, user):
-        """Archive instead of hard-delete; mark downstream as BLOCKED."""
+        """Archive instead of hard-delete; mark all downstream nodes as BLOCKED."""
         with transaction.atomic():
             node.is_deleted = True
             node.status = ProjectNode.Status.ARCHIVED
             node.save()
  
-            # Downstream nodes that depend on this one
-            downstream_ids = NodeDependency.objects.filter(
-                source_node=node
-            ).values_list("target_node_id", flat=True)
+            # Find all downstream nodes that depend on this one via BFS
+            downstream_ids = set()
+            queue = [node.id]
+            while queue:
+                current_id = queue.pop(0)
+                # Find direct children of the current node
+                direct_downstream = list(NodeDependency.objects.filter(
+                    source_node_id=current_id
+                ).values_list("target_node_id", flat=True))
+                
+                for downstream_id in direct_downstream:
+                    if downstream_id not in downstream_ids:
+                        downstream_ids.add(downstream_id)
+                        queue.append(downstream_id)
  
-            ProjectNode.objects.filter(id__in=downstream_ids).update(
-                status=ProjectNode.Status.BLOCKED
-            )
+            if downstream_ids:
+                ProjectNode.objects.filter(id__in=downstream_ids).update(
+                    status=ProjectNode.Status.BLOCKED
+                )
  
             NodeActivity.objects.create(
                 node=node,
@@ -1449,16 +1471,54 @@ class NodeService:
             )
  
     @staticmethod
-    def update_position(node: ProjectNode, x: float, y: float):
+    def update_position(node: ProjectNode, stage: int, row: int):
         """Quick positional update from canvas drag — no activity log needed."""
-        node.position_x = x
-        node.position_y = y
-        node.save(update_fields=["position_x", "position_y"])
+        node.stage = stage
+        node.row = row
+        node.save(update_fields=["stage", "row"])
  
  
 # ─── Dependency ───────────────────────────────────────────────────────────────
  
 class DependencyService:
+    @staticmethod
+    def _restore_downstream(source_node: ProjectNode, user):
+
+        queue = [source_node.id]
+        visited = set()
+
+        while queue:
+            node_id = queue.pop(0)
+
+            if node_id in visited:
+                continue
+
+            visited.add(node_id)
+
+            try:
+                node = ProjectNode.objects.get(
+                    id=node_id,
+                    is_deleted=False
+                )
+            except ProjectNode.DoesNotExist:
+                continue
+
+            if node.status == ProjectNode.Status.NEEDS_REVIEW:
+                node.status = ProjectNode.Status.ACTIVE
+                node.save(update_fields=["status"])
+
+                NodeActivity.objects.create(
+                    node=node,
+                    actor=user,
+                    event_type=NodeActivity.EventType.STATUS_CHANGED,
+                    message='Automatically restored to ACTIVE after dependency recovery.',
+                )
+
+            next_ids = NodeDependency.objects.filter(
+                source_node=node
+            ).values_list("target_node_id", flat=True)
+
+            queue.extend(next_ids)
  
     @staticmethod
     def _has_cycle(source_id: int, target_id: int) -> bool:
@@ -1482,6 +1542,8 @@ class DependencyService:
     def add_dependency(source: ProjectNode, target: ProjectNode, dependency_type: str, user) -> NodeDependency:
         if DependencyService._has_cycle(source.id, target.id):
             raise ValidationError("Adding this dependency would create a circular reference.")
+        if source.status==ProjectNode.Status.INACTIVE or source.status==ProjectNode.Status.BLOCKED:
+            raise ValidationError("Cannot add dependency from an inactive node.")
  
         dep, created = NodeDependency.objects.get_or_create(
             source_node=source,
@@ -1490,7 +1552,7 @@ class DependencyService:
         )
         if not created:
             raise ValidationError("This dependency already exists.")
- 
+        DependencyService._restore_downstream(target, user)
         NodeActivity.objects.create(
             node=source,
             actor=user,
@@ -1500,5 +1562,32 @@ class DependencyService:
         return dep
  
     @staticmethod
-    def remove_dependency(dep: NodeDependency):
-        dep.delete() 
+    def update_dependency(dep: NodeDependency, dependency_type: str, user) -> NodeDependency:
+        if dependency_type not in dict(NodeDependency.DependencyType.choices):
+            from django.core.exceptions import ValidationError
+            raise ValidationError("Invalid dependency type.")
+        dep.dependency_type = dependency_type
+        dep.save(update_fields=["dependency_type"])
+        NodeActivity.objects.create(
+            node=dep.source_node,
+            actor=user,
+            event_type=NodeActivity.EventType.UPDATED,
+            message=f'Dependency type updated to "{dependency_type}".',
+        )
+        return dep
+
+    @staticmethod
+    def remove_dependency(dep: NodeDependency, user):
+        source_node = dep.source_node
+        target_node = dep.target_node
+
+        dep.delete()
+
+        FileService._propagate_impact(target_node, user)
+
+        NodeActivity.objects.create(
+            node=target_node,
+            actor=user,
+            event_type=NodeActivity.EventType.STATUS_CHANGED,
+            message=f'Dependency from "{source_node.title}" removed. Marked as NEEDS_REVIEW.',
+        )

@@ -539,7 +539,7 @@ class NodeSerializer(serializers.ModelSerializer):
         fields = [
             "id", "thread", "title", "description", "status",
             "parent_node_id", "branch_root_id",
-            "position_x", "position_y",
+            "stage", "row",
             "created_by", "created_at", "updated_at",
             "is_deleted", "file_count", "is_branch",
         ]
@@ -568,13 +568,13 @@ class NodeCreateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = ProjectNode
-        fields = ["title", "description", "parent_node_id", "branch_root_id", "position_x", "position_y"]
+        fields = ["title", "description", "parent_node_id", "branch_root_id", "stage", "row"]
 
 
 class NodeUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = ProjectNode
-        fields = ["title", "description", "status", "position_x", "position_y"]
+        fields = ["title", "description", "status", "stage", "row"]
 
 
 # ─── Dependency ───────────────────────────────────────────────────────────────
@@ -649,7 +649,7 @@ class GraphNodeSerializer(serializers.ModelSerializer):
         fields = [
             "id", "title", "description", "status",
             "parent_node", "branch_root",
-            "position_x", "position_y",
+            "stage", "row",
             "is_branch", "file_count",
         ]
 

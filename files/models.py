@@ -268,6 +268,7 @@ class ProjectThread(models.Model):
 class ProjectNode(models.Model):
  
     class Status(models.TextChoices):
+        INACTIVE = "INACTIVE", "Inactive"
         ACTIVE = "ACTIVE", "Active"
         NEEDS_REVIEW = "NEEDS_REVIEW", "Needs Review"
         OUTDATED = "OUTDATED", "Outdated"
@@ -277,7 +278,7 @@ class ProjectNode(models.Model):
     thread = models.ForeignKey(ProjectThread, on_delete=models.CASCADE, related_name="nodes")
     title = models.CharField(max_length=255)
     description = models.TextField(blank=True)
-    status = models.CharField(max_length=20, choices=Status.choices, default=Status.ACTIVE)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.INACTIVE)
  
     # Tree structure
     parent_node = models.ForeignKey(
@@ -288,9 +289,9 @@ class ProjectNode(models.Model):
         "self", null=True, blank=True, on_delete=models.SET_NULL, related_name="branches"
     )
  
-    # Canvas position for ReactFlow
-    position_x = models.FloatField(default=0)
-    position_y = models.FloatField(default=0)
+    # Table layout position
+    stage = models.IntegerField(default=0)
+    row = models.IntegerField(default=0)
  
     created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name="nodes")
     created_at = models.DateTimeField(auto_now_add=True)
@@ -308,8 +309,12 @@ class ProjectNode(models.Model):
 class NodeDependency(models.Model):
  
     class DependencyType(models.TextChoices):
-        BLOCKS = "BLOCKS", "Blocks"
-        INFORMS = "INFORMS", "Informs"
+        DEPENDS_ON = "DEPENDS_ON", "Depends On"
+        REQUIRED_FOR = "REQUIRED_FOR", "Required For"
+        WAITING_FOR = "WAITING_FOR", "Waiting For"
+        RELATED = "RELATED", "Related"
+        NOT_SURE = "NOT_SURE", "Not Sure"
+        NEEDS_REVIEW = "NEEDS_REVIEW", "Needs Review"
  
     source_node = models.ForeignKey(
         ProjectNode, on_delete=models.CASCADE, related_name="outgoing_dependencies"
@@ -318,7 +323,7 @@ class NodeDependency(models.Model):
         ProjectNode, on_delete=models.CASCADE, related_name="incoming_dependencies"
     )
     dependency_type = models.CharField(
-        max_length=20, choices=DependencyType.choices, default=DependencyType.BLOCKS
+        max_length=20, choices=DependencyType.choices, default=DependencyType.DEPENDS_ON
     )
     created_at = models.DateTimeField(auto_now_add=True)
  
