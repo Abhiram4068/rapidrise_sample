@@ -87,9 +87,7 @@ class AuthService:
         user enumeration (don't reveal whether the email exists).
         """
         try:
-            print("EMAIL RECEIVED:", email)
             user = User.objects.get(email=email)
-            print("USER FOUND:", user.email)
         except User.DoesNotExist:
             return  # silently do nothing
 
@@ -290,6 +288,19 @@ class FileService:
             as_attachment=True,
             filename=file_obj.original_name
         )
+
+    @staticmethod
+    def view_file_inline(user, file_id):
+        """
+        Serves the file for inline viewing in a new tab.
+        """
+        file_obj = get_object_or_404(File, id=file_id, user=user, is_deleted=False)
+        response = FileResponse(
+            file_obj.file.open('rb'),
+            content_type=file_obj.content_type,
+            as_attachment=False
+        )
+        return response
 
     @staticmethod
     def user_list_files(user):
@@ -1014,7 +1025,6 @@ class StorageService:
         """
         Calculate storage usage percentage
         """
-        print(used,limit)
         if limit == 0:
             return 0
 

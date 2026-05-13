@@ -225,7 +225,6 @@ class ChangePasswordView(APIView):
     permission_classes=[IsAuthenticated]
     serializer_class=ChangePasswordSerialzier
     def post(self, request):
-        print(request.data)
         serializer=self.serializer_class(
             data = request.data,
             context = {'request':request}
@@ -289,6 +288,14 @@ class FileDownloadView(APIView):
     permission_classes=[IsAuthenticated]
     def get(self, request, file_id):
         return FileService.download_file(request.user, file_id)
+
+class FileViewInlineView(APIView):
+    """
+    Serves the file content for inline viewing in the browser.
+    """
+    permission_classes = [IsAuthenticated]
+    def get(self, request, file_id):
+        return FileService.view_file_inline(request.user, file_id)
     
 
 class DefaultPageNumberPagination(PageNumberPagination):
@@ -348,7 +355,9 @@ class FileUpdateView(APIView):
             data=request.data,
             partial=True
         )
+        
         serializer.is_valid(raise_exception=True)
+        print(serializer.validated_data)
         file_obj = FileService.get_file_detail(
             user=request.user,
             file_id=pk
@@ -517,7 +526,6 @@ class FileStarredList(APIView):
         starred_files=FileService.get_user_starred_files(request.user)
         if starred_files.exists():
             serializer = FilesListSerializer(starred_files, many=True, context={'request': request})
-            print(serializer.data)
             return Response(serializer.data, status=status.HTTP_200_OK)
         return Response(
             {"message":"No starred files!"},
