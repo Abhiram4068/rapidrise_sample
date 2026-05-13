@@ -34,4 +34,5 @@ htmlcov/
 
 # User uploads
 userfiles/
+node_files/
 db.sqlite3

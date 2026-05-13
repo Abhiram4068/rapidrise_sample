@@ -1546,13 +1546,45 @@ class DependencyService:
         if source.status==ProjectNode.Status.INACTIVE or source.status==ProjectNode.Status.BLOCKED:
             raise ValidationError("Cannot add dependency from an inactive node.")
  
-        dep, created = NodeDependency.objects.get_or_create(
+        # Ensure only one outgoing dependency from source (cascading deactivation)
+        old_deps = NodeDependency.objects.filter(source_node=source)
+        if old_deps.exists():
+            target_ids = list(old_deps.values_list("target_node_id", flat=True))
+            old_deps.delete()
+            
+            # Cascade: all orphaned nodes become INACTIVE and lose their outgoing branches
+            queue = target_ids
+            visited = set()
+            while queue:
+                curr_id = queue.pop(0)
+                if curr_id in visited: continue
+                visited.add(curr_id)
+                
+                try:
+                    curr_node = ProjectNode.objects.get(id=curr_id)
+                    curr_node.status = ProjectNode.Status.INACTIVE
+                    curr_node.save(update_fields=["status"])
+                    
+                    # Find and delete its outgoing dependencies, adding targets to the queue
+                    outgoing = NodeDependency.objects.filter(source_node_id=curr_id)
+                    next_targets = list(outgoing.values_list("target_node_id", flat=True))
+                    outgoing.delete()
+                    queue.extend(next_targets)
+                    
+                    NodeActivity.objects.create(
+                        node=curr_node,
+                        actor=user,
+                        event_type=NodeActivity.EventType.STATUS_CHANGED,
+                        message=f'Node "{curr_node.title}" deactivated because its parent dependency was removed.',
+                    )
+                except ProjectNode.DoesNotExist:
+                    continue
+        dep = NodeDependency.objects.create(
             source_node=source,
             target_node=target,
-            defaults={"dependency_type": dependency_type},
+            dependency_type=dependency_type,
         )
-        if not created:
-            raise ValidationError("This dependency already exists.")
+
         target.status=ProjectNode.Status.ACTIVE
         target.save(update_fields=["status"])
         DependencyService._restore_downstream(target, user)
@@ -1560,7 +1592,7 @@ class DependencyService:
             node=source,
             actor=user,
             event_type=NodeActivity.EventType.DEPENDENCY_ADDED,
-            message=f'Dependency added: "{source.title}" → "{target.title}".',
+            message=f'Dependency updated: "{source.title}" now points to "{target.title}".',
         )
         return dep
  
