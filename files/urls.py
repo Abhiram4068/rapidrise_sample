@@ -3,6 +3,7 @@ from files.views import (
     RegisterView, LoginView, TokenRefreshCookieView,DesignationListView, ChangePasswordView,LogoutView, ForgotPasswordView,ResetPasswordView,UserProfileView, FileUploadView, ClearTrash, FileDownloadView, FileListView, FileUpdateView, ArchiveFile, FileArchiveView, FileUnarchiveView,FileDetailView,FileDeleteView, FileShareCreateListUpdateView, PublicFileAccessView,
     CollectionListCreateView, CollectionDetailView, CollectionFileView, FileStarredList, CollectionStarredList, RecentView, FileShareScheduleCreateListView, FileShareScheduleCalendarView, RevokeScheduledMailView, ReportDownloadView, ArchiveDeleteFileView, StorageSummaryView, DashboardView, StorageManagementView, StoragePermanentDeleteView
     )
+from . import views
 """
     app level urls
 """
@@ -71,4 +72,28 @@ urlpatterns=[
     
     #dashboard
     path("dashboard/", DashboardView.as_view(), name="dashboard"),
+    # Threads
+    path("threads/", views.ThreadListCreateView.as_view(), name="thread-list-create"),
+    path("threads/<int:pk>/", views.ThreadDetailView.as_view(), name="thread-detail"),
+    path("threads/<int:pk>/graph/", views.ThreadGraphView.as_view(), name="thread-graph"),
+ 
+    # Nodes (scoped to a thread)
+    path("threads/<int:thread_id>/nodes/", views.NodeListCreateView.as_view(), name="node-list-create"),
+ 
+    # Node detail operations
+    path("nodes/<int:pk>/", views.NodeDetailView.as_view(), name="node-detail"),
+    path("nodes/<int:pk>/branch/", views.NodeBranchView.as_view(), name="node-branch"),
+    path("nodes/<int:pk>/position/", views.NodePositionView.as_view(), name="node-position"),
+ 
+    # Dependencies
+    path("nodes/<int:node_id>/dependencies/", views.DependencyListCreateView.as_view(), name="dependency-list-create"),
+    path("dependencies/<int:pk>/", views.DependencyDetailView.as_view(), name="dependency-detail"),
+ 
+    # Files
+    path("nodes/<int:node_id>/files/", views.NodeFileListCreateView.as_view(), name="file-list-create"),
+    path("files/<int:pk>/", views.NodeFileDetailView.as_view(), name="file-detail"),
+ 
+    # Activity feed
+    path("nodes/<int:node_id>/activity/", views.NodeActivityView.as_view(), name="node-activity"),
 ]
+

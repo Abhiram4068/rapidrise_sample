@@ -246,3 +246,127 @@ class CollectionFile(models.Model):
 
     def __str__(self):
         return f"{self.file.original_name} → {self.collection.name}"
+
+
+
+
+
+#threads
+class ProjectThread(models.Model):
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name="threads")
+    created_at = models.DateTimeField(auto_now_add=True)
+ 
+    def __str__(self):
+        return self.title
+ 
+    class Meta:
+        ordering = ["-created_at"]
+ 
+ 
+class ProjectNode(models.Model):
+ 
+    class Status(models.TextChoices):
+        INACTIVE = "INACTIVE", "Inactive"
+        ACTIVE = "ACTIVE", "Active"
+        NEEDS_REVIEW = "NEEDS_REVIEW", "Needs Review"
+        OUTDATED = "OUTDATED", "Outdated"
+        BLOCKED = "BLOCKED", "Blocked"
+        ARCHIVED = "ARCHIVED", "Archived"
+ 
+    thread = models.ForeignKey(ProjectThread, on_delete=models.CASCADE, related_name="nodes")
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.INACTIVE)
+ 
+    # Tree structure
+    parent_node = models.ForeignKey(
+        "self", null=True, blank=True, on_delete=models.SET_NULL, related_name="children"
+    )
+    # Tracks which node this branch diverged from (null = main chain)
+    branch_root = models.ForeignKey(
+        "self", null=True, blank=True, on_delete=models.SET_NULL, related_name="branches"
+    )
+ 
+    # Table layout position
+    stage = models.IntegerField(default=0)
+    row = models.IntegerField(default=0)
+ 
+    created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name="nodes")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+ 
+    is_deleted = models.BooleanField(default=False)  # Soft delete
+ 
+    def __str__(self):
+        return f"{self.thread.title} → {self.title}"
+ 
+    class Meta:
+        ordering = ["created_at"]
+ 
+ 
+class NodeDependency(models.Model):
+ 
+    class DependencyType(models.TextChoices):
+        DEPENDS_ON = "DEPENDS_ON", "Depends On"
+        REQUIRED_FOR = "REQUIRED_FOR", "Required For"
+        WAITING_FOR = "WAITING_FOR", "Waiting For"
+        RELATED = "RELATED", "Related"
+        NOT_SURE = "NOT_SURE", "Not Sure"
+        NEEDS_REVIEW = "NEEDS_REVIEW", "Needs Review"
+ 
+    source_node = models.ForeignKey(
+        ProjectNode, on_delete=models.CASCADE, related_name="outgoing_dependencies"
+    )
+    target_node = models.ForeignKey(
+        ProjectNode, on_delete=models.CASCADE, related_name="incoming_dependencies"
+    )
+    dependency_type = models.CharField(
+        max_length=20, choices=DependencyType.choices, default=DependencyType.DEPENDS_ON
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+ 
+    class Meta:
+        unique_together = ("source_node", "target_node")
+ 
+    def __str__(self):
+        return f"{self.source_node.title} → {self.target_node.title}"
+ 
+ 
+class NodeFile(models.Model):
+    node = models.ForeignKey(ProjectNode, on_delete=models.CASCADE, related_name="files")
+    file = models.FileField(upload_to="node_files/")
+    original_name = models.CharField(max_length=255)
+    uploaded_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name="uploaded_files")
+    created_at = models.DateTimeField(auto_now_add=True)
+ 
+    def __str__(self):
+        return f"{self.node.title} / {self.original_name}"
+ 
+    class Meta:
+        ordering = ["-created_at"]
+ 
+ 
+class NodeActivity(models.Model):
+ 
+    class EventType(models.TextChoices):
+        CREATED = "CREATED", "Created"
+        UPDATED = "UPDATED", "Updated"
+        FILE_UPLOADED = "FILE_UPLOADED", "File Uploaded"
+        FILE_DELETED = "FILE_DELETED", "File Deleted"
+        STATUS_CHANGED = "STATUS_CHANGED", "Status Changed"
+        DEPENDENCY_ADDED = "DEPENDENCY_ADDED", "Dependency Added"
+        COMMENTED = "COMMENTED", "Commented"
+ 
+    node = models.ForeignKey(ProjectNode, on_delete=models.CASCADE, related_name="activities")
+    actor = models.ForeignKey(User, on_delete=models.CASCADE)
+    event_type = models.CharField(max_length=30, choices=EventType.choices)
+    message = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+ 
+    def __str__(self):
+        return f"{self.node.title} — {self.event_type}"
+ 
+    class Meta:
+        ordering = ["-created_at"]
