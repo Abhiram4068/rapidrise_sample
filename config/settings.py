@@ -260,6 +260,7 @@ LOGGING = {
 }
 
 import ssl
+from celery.schedules import crontab
 
 CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL")
 CELERY_RESULT_BACKEND = CELERY_BROKER_URL
@@ -273,3 +274,24 @@ CELERY_REDIS_BACKEND_USE_SSL = {
 }
 CELERY_TIMEZONE = TIME_ZONE
 CELERY_ENABLE_UTC = True
+
+
+CELERY_BEAT_SCHEDULE = {
+    "auto-clear-trash": {
+        "task": "files.tasks.auto_clear_trash",
+        # Runs every 1 hour
+        "schedule": crontab(minute=0, hour="*/1"),
+    },
+
+    "auto-clear-scheduled-mails-history": {
+        "task": "files.tasks.auto_clear_scheduled_mails_history",
+        # Runs every 1 hour
+        "schedule": crontab(minute=0, hour="*/1"),
+    },
+
+    "auto-generate-monthly-reports": {
+        "task": "files.tasks.auto_generate_report",
+        # Runs every 2 hours
+        "schedule": crontab(minute=0, hour="*/2"),
+    },
+}
