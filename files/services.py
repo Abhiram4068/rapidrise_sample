@@ -10,10 +10,12 @@ from django.http import FileResponse
 from django.shortcuts import get_object_or_404
 import secrets
 from django.utils import timezone
+from django.utils.timezone import localtime
 from datetime import timedelta
+import csv
+from io import StringIO
 from django.core.mail import send_mail
 from django.conf import settings
-from django.utils import timezone
 from django.db.models import Sum, Count
 from django.contrib.auth import update_session_auth_hash
 from .exceptions import StorageLimitExceeded
@@ -901,7 +903,7 @@ class ReportService:
                 "file_name": share.file.original_name,
                 "recipient": share.recipient_email,
                 "status": "shared",
-                "sent_at": share.created_at,                
+                "sent_at": localtime(share.created_at),                
                 "sort_time": share.created_at,  
                 "accessed": share.accessed,
                 "accessed_at":share.accessed_at or "N/A"
@@ -955,7 +957,7 @@ class ReportService:
                 row["file_name"],
                 row["recipient"],
                 row["status"],
-                row["sent_at"],
+                str(row["sent_at"]),
                 row["accessed"],
             ])
 

@@ -131,7 +131,8 @@ class FileUploadSerialzier(serializers.Serializer):
         'application/octet-stream',
         'application/vnd.ms-excel',
         'application/zip',
-        'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'image/webp'
         
     ]
         
