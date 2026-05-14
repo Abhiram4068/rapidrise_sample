@@ -31,7 +31,6 @@ class RegisterSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         password=attrs.get('password')
         confirm_password=attrs.get('confirm_password')
-        # print(password, confirm_password)
         if password!=confirm_password:
             raise serializers.ValidationError(
                 {'confirm_password':'Passwords do not match'}
@@ -137,7 +136,6 @@ class FileUploadSerialzier(serializers.Serializer):
     ]
         
         for file in files:
-            print(file.content_type)
             if file.size>max_file_size:
                 logger.warning(
                     f"File too large | name={file.name} | size={file.size}"
@@ -172,13 +170,23 @@ class FileUploadSerialzier(serializers.Serializer):
             )
         return data
 
+class FileViewInlineSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = File
+        fields = ['id', 'original_name', 'content_type']
+        read_only_fields = ['id', 'original_name', 'content_type']
+class FileShareLinkSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = FileShareLink
+        fields = ['id', 'recipient_email', 'is_active', 'expiration_datetime', 'accessed', 'created_at']
+
 class FilesListSerializer(serializers.ModelSerializer):
     created_at = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", read_only=True)
     updated_at = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", read_only=True)
     file_size = serializers.SerializerMethodField()
     file_url = serializers.SerializerMethodField()
     status = serializers.SerializerMethodField()
-
+    shares = serializers.SerializerMethodField()
     class Meta:
         model=File
         fields=[
@@ -195,7 +203,8 @@ class FilesListSerializer(serializers.ModelSerializer):
             'updated_at',
             'file_url',
             'archived_at',
-            'status'
+            'status',
+            'shares'
         ]
     def get_file_size(self, obj):
         size = obj.file_size or 0 
@@ -220,6 +229,11 @@ class FilesListSerializer(serializers.ModelSerializer):
     def get_status(self, obj):
         if obj.archived_at:
             return "Archived"
+    def get_shares(self, obj):
+            active_shares = obj.shares.filter(is_active=True).exclude(
+                expiration_datetime__lt=timezone.now()
+            )
+            return FileShareLinkSerializer(active_shares, many=True).data
 
 
 class FileUpdateSerializer(serializers.ModelSerializer):
@@ -228,8 +242,14 @@ class FileUpdateSerializer(serializers.ModelSerializer):
         fields = ["display_name", "description", "updated_at", "is_starred"]
 
     def validate_display_name(self, value):
-        if value and len(value.strip()) == 0:
-            raise serializers.ValidationError("Display name cannot be empty.")
+        if value is not None and len(value.strip()) == 0:
+            raise serializers.ValidationError(
+                "Display name cannot be empty."
+            )
+        return value
+    def validate_description(self, value):
+        if value is not None and not value.strip():
+            return None
         return value
     
     
