@@ -1,6 +1,7 @@
 from django.db.models import Q
 from django.contrib.auth import get_user_model
-from .models import User, File, FileShareLink, Collection, CollectionFile, ScheduledMail
+from django.utils.text import slugify
+from .models import User, File, FileShareLink, Collection, CollectionFile, ScheduledMail, ReactivationRequest
 from django.db.models import F
 from django.db import transaction, IntegrityError
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -22,6 +23,7 @@ from .exceptions import StorageLimitExceeded
 import logging
 logger = logging.getLogger(__name__)
 import os
+from rest_framework.exceptions import ValidationError
 from datetime import datetime
 from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
 from django.utils.encoding import force_bytes, force_str
@@ -141,6 +143,51 @@ class AuthService:
         user.set_password(new_password)
         user.save()
         return user
+
+    @staticmethod
+    def deactivate_account(user):
+        """
+        Deactivate user account by setting account_status to deactivated.
+        User remains is_active=True to allow login for reactivation requests.
+        """
+        user.account_status = User.AccountStatus.DEACTIVATED
+        user.save()
+        
+        logger.info(f"Account deactivated for user: {user.email}")
+        
+        def send_email():
+            try:
+                send_mail(
+                    subject="Your Account has been Deactivated",
+                    message=f"Hi {user.first_name},\n\nYour account has been deactivated as per your request.\nIf this was a mistake, you can log in and submit a reactivation request to the admin.",
+                    from_email=settings.DEFAULT_FROM_EMAIL,
+                    recipient_list=[user.email],
+                    fail_silently=False,
+                )
+            except Exception as e:
+                logger.error(f"Failed to send deactivation email to {user.email}: {e}")
+
+        import threading
+        thread = threading.Thread(target=send_email)
+        thread.start()
+        
+        return True
+
+class AccountService:
+    @staticmethod
+    def submit_reactivation_request(user, reason):
+        """
+        Submit a request to the admin for account reactivation.
+        """
+        if ReactivationRequest.objects.filter(user=user, is_resolved=False).exists():
+            raise ValidationError("You already have a pending reactivation request.")
+        
+        request = ReactivationRequest.objects.create(
+            user=user,
+            reason=reason
+        )
+        logger.info(f"Reactivation request submitted by user: {user.email}")
+        return request
 
 
 class UserProfileService:
