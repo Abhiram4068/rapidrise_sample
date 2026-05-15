@@ -11,11 +11,11 @@ from rest_framework_simplejwt.exceptions import TokenError
 from django.http import FileResponse
 from django.core.exceptions import ValidationError, PermissionDenied
 from files.serializers import (
-    RegisterSerializer, LoginSerializer, UserProfileSerializer,ChangePasswordSerialzier, FileUploadSerialzier, FilesListSerializer, FileUpdateSerializer ,FileShareSerializer, FileShareCreateSerializer, PublicFileSerializer,CollectionSerializer, CollectionFileSerializer
-    ,ScheduledMailSerializer, FileShareListSerializer, ReportQuerySerializer, ResetPasswordSerializer, ForgotPasswordSerializer
+    RegisterSerializer, LoginSerializer, UserProfileSerializer,ChangePasswordSerialzier, DeactivateAccountSerializer, FileUploadSerialzier, FilesListSerializer, FileUpdateSerializer ,FileShareSerializer, FileShareCreateSerializer, PublicFileSerializer,CollectionSerializer, CollectionFileSerializer
+    ,ScheduledMailSerializer, FileShareListSerializer, ReportQuerySerializer, ResetPasswordSerializer, ForgotPasswordSerializer, ReactivationRequestSerializer
     )
 from files.services import (
-    create_user, get_designation, authenticate_and_generate_token, AuthenticationError ,AuthService, UserProfileService, FileService, FileShareService, ViewFileShareService, CollectionService, ReportService
+    create_user, get_designation, authenticate_and_generate_token, AuthenticationError ,AuthService, UserProfileService, FileService, FileShareService, ViewFileShareService, CollectionService, ReportService, AccountService
     )
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.exceptions import NotFound
@@ -113,15 +113,12 @@ class LoginView(APIView):
             )
         user=result['user']
         tokens=result['tokens']
-        response = Response({
-            'message':'Login successful',
-            'user':{
-                'id':user.id,
-                'email':user.email,
-                'first_name':user.first_name
-                }
-        },status=status.HTTP_200_OK
-        )
+        response_data = {
+            "message": "Login successful",
+            "user": UserProfileSerializer(user).data,
+            "account_status": user.account_status
+        }
+        response = Response(response_data, status=status.HTTP_200_OK)
         _set_auth_cookies(response, tokens["access"], tokens["refresh"])
 
         return response
@@ -157,6 +154,7 @@ class TokenRefreshCookieView(APIView):
                 user = User.objects.get(id=user_id)
                 user_data = UserProfileSerializer(user, context={"request": request}).data
                 user_data["authenticated"] = True
+                user_data["account_status"] = user.account_status
             except Exception:
                 pass
 
@@ -239,6 +237,44 @@ class ChangePasswordView(APIView):
             {"message":"Password changed successfully"},
             status=status.HTTP_200_OK
             )
+
+class DeactivateAccountView(APIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = DeactivateAccountSerializer
+
+    def post(self, request):
+        serializer = self.serializer_class(
+            data=request.data,
+            context={'request': request}
+        )
+        serializer.is_valid(raise_exception=True)
+        
+        AuthService.deactivate_account(user=request.user)
+        
+        response = Response(
+            {"message": "Account deactivated successfully. You can request reactivation later if needed."},
+            status=status.HTTP_200_OK
+        )
+        _clear_auth_cookies(response)
+        return response
+
+class ReactivationRequestView(APIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = ReactivationRequestSerializer
+
+    def post(self, request):
+        serializer = self.serializer_class(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        AccountService.submit_reactivation_request(
+            user=request.user,
+            reason=serializer.validated_data['reason']
+        )
+        
+        return Response(
+            {"message": "Reactivation request submitted successfully. The admin will review it soon."},
+            status=status.HTTP_201_CREATED
+        )
 
 import time
 from rest_framework.exceptions import ValidationError
@@ -608,6 +644,8 @@ class FileShareCreateListUpdateView(APIView):
             "current_page": page,
             "total_pages": (total_mails_send + page_size - 1),
             "total_mails_send": total_mails_send,
+            "user_data": UserProfileSerializer(request.user).data,
+            "account_status": request.user.account_status,
             "data": serializer.data
         }, status=status.HTTP_200_OK)
         

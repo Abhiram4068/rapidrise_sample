@@ -1,4 +1,4 @@
-from .models import User, File, FileShareLink, Collection, CollectionFile, ScheduledMail
+from .models import User, File, FileShareLink, Collection, CollectionFile, ScheduledMail, ReactivationRequest
 from rest_framework import serializers
 from django.contrib.auth.password_validation import validate_password
 from django.db import models
@@ -72,10 +72,11 @@ class UserProfileSerializer(serializers.ModelSerializer):
     status = serializers.SerializerMethodField(source="is_active", read_only=True) 
     designation = serializers.SerializerMethodField()
     storage_used_bytes=serializers.SerializerMethodField()
+    has_pending_reactivation_request = serializers.SerializerMethodField()
     
     class Meta:
         model = User
-        fields = ["id", "email", "first_name", "last_name", "designation", "date_joined", "total_files", "date_of_birth", "status", "storage_used_bytes"]
+        fields = ["id", "email", "first_name", "last_name", "designation", "date_joined", "total_files", "date_of_birth", "status", "account_status", "storage_used_bytes", "has_pending_reactivation_request"]
         read_only_fields = fields
 
     def get_date_joined(self, obj):
@@ -83,6 +84,9 @@ class UserProfileSerializer(serializers.ModelSerializer):
 
     def get_status(self, obj):
         return "Active" if obj.is_active else "Unactive"
+
+    def get_has_pending_reactivation_request(self, obj):
+        return ReactivationRequest.objects.filter(user=obj, is_resolved=False).exists()
 
     def get_designation(self, obj):
         return obj.get_designation_display()
@@ -109,6 +113,21 @@ class ChangePasswordSerialzier(serializers.Serializer):
         if (self.context["request"].user.check_password(data["new_password"])):
             raise serializers.ValidationError({"new_password": "New password cannot be same as old password"})
         return data
+
+class ReactivationRequestSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ReactivationRequest
+        fields = ["id", "reason", "created_at", "is_resolved"]
+        read_only_fields = ["id", "created_at", "is_resolved"]
+
+class DeactivateAccountSerializer(serializers.Serializer):
+    password = serializers.CharField(required=True, write_only=True)
+
+    def validate_password(self, value):
+        user = self.context["request"].user
+        if not user.check_password(value):
+            raise serializers.ValidationError("Password verification failed. Incorrect password.")
+        return value
 
       
 class FileUploadSerialzier(serializers.Serializer):

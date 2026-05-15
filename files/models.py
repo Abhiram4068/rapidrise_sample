@@ -40,6 +40,10 @@ class User(AbstractUser):
         OPERATIONS_MANAGER = "operations_manager", "Operations Manager"
         PROGRAM_MANAGER = "program_manager", "Program Manager"
 
+    class AccountStatus(models.TextChoices):
+        ACTIVE = "active", "Active"
+        DEACTIVATED = "deactivated", "Deactivated"
+
     username = None
     email = models.EmailField(unique=True)
     date_of_birth = models.DateField(null=True, blank=True)
@@ -48,6 +52,11 @@ class User(AbstractUser):
         max_length=20,
         choices=DesignationChoices.choices,
         default=DesignationChoices.PROJECT_MANAGER
+    )
+    account_status = models.CharField(
+        max_length=20,
+        choices=AccountStatus.choices,
+        default=AccountStatus.ACTIVE
     )
     storage_limit_bytes = models.BigIntegerField(default=1_073_741_824)
     storage_used_bytes = models.BigIntegerField(default=0)
@@ -370,3 +379,21 @@ class NodeActivity(models.Model):
  
     class Meta:
         ordering = ["-created_at"]
+
+class ReactivationRequest(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="reactivation_requests"
+    )
+    reason = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    is_resolved = models.BooleanField(default=False)
+
+    class Meta:
+        db_table = "reactivation_requests"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"Reactivation request for {self.user.email} at {self.created_at}"
