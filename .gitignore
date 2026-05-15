@@ -36,3 +36,5 @@ htmlcov/
 userfiles/
 node_files/
 db.sqlite3
+
+celerybeat-schedule
