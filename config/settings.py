@@ -276,22 +276,23 @@ CELERY_TIMEZONE = TIME_ZONE
 CELERY_ENABLE_UTC = True
 
 
+
 CELERY_BEAT_SCHEDULE = {
     "auto-clear-trash": {
         "task": "files.tasks.auto_clear_trash",
-        # Runs every 1 hour
-        "schedule": crontab(minute=0, hour="*/1"),
+        # Runs every 30 days at midnight
+        "schedule": crontab(minute=0, hour=0, day_of_month="*/30"),
     },
 
     "auto-clear-scheduled-mails-history": {
         "task": "files.tasks.auto_clear_scheduled_mails_history",
-        # Runs every 1 hour
-        "schedule": crontab(minute=0, hour="*/1"),
+        # Runs every 30 days at midnight
+        "schedule": crontab(minute=0, hour=0, day_of_month="*/30"),
     },
 
     "auto-generate-monthly-reports": {
         "task": "files.tasks.auto_generate_report",
-        # Runs every 2 hours
-        "schedule": crontab(minute=0, hour="*/2"),
+        # Runs every 30 days at midnight
+        "schedule": crontab(minute=0, hour=0, day_of_month="*/30"),
     },
 }
