@@ -2,7 +2,7 @@ from django.urls import path
 from files.views import (
     RegisterView, LoginView, TokenRefreshCookieView,DesignationListView, ChangePasswordView,LogoutView, ForgotPasswordView,ResetPasswordView,UserProfileView, FileUploadView, ClearTrash, FileDownloadView, FileViewInlineView, FileListView, FileUpdateView, ArchiveFile, FileArchiveView, FileUnarchiveView,FileDetailView,FileDeleteView, FileShareCreateListUpdateView, PublicFileAccessView,
     CollectionListCreateView, CollectionDetailView, CollectionFileView, FileStarredList, CollectionStarredList, RecentView, FileShareScheduleCreateListView, FileShareScheduleCalendarView, RevokeScheduledMailView, ReportDownloadView, ArchiveDeleteFileView, StorageSummaryView, DashboardView, StorageManagementView, StoragePermanentDeleteView,
-    DeactivateAccountView, ReactivationRequestView
+    DeactivateAccountView, ReactivationRequestView, ReactivationResolveView
     )
 from . import views
 """
@@ -23,6 +23,7 @@ urlpatterns=[
     path('profile/', UserProfileView.as_view(), name='user-profile'),
     path('auth/deactivate/', DeactivateAccountView.as_view(), name='deactivate_account'),
     path('auth/reactivation-request/', ReactivationRequestView.as_view(), name='reactivation_request'),
+    path('auth/reactivation-request/<str:pk>/resolve/', ReactivationResolveView.as_view(), name='reactivation_resolve'),
     #password change
     path("auth/change-password/",ChangePasswordView.as_view(), name="change-password" ),
     #file download urls

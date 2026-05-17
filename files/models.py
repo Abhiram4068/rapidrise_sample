@@ -41,8 +41,12 @@ class User(AbstractUser):
         PROGRAM_MANAGER = "program_manager", "Program Manager"
 
     class AccountStatus(models.TextChoices):
+        WAITING_FOR_APPROVAL = "Waiting For Approval", "Waiting For Approval"
         ACTIVE = "active", "Active"
         DEACTIVATED = "deactivated", "Deactivated"
+        BLOCKED = "blocked", "Blocked"
+        REJECTED = "rejected", "Rejected"
+        DELETED = "deleted", "Deleted"
 
     username = None
     email = models.EmailField(unique=True)
@@ -60,7 +64,7 @@ class User(AbstractUser):
     )
     storage_limit_bytes = models.BigIntegerField(default=1_073_741_824)
     storage_used_bytes = models.BigIntegerField(default=0)
-
+    deleted_at=models.DateTimeField(null=True, blank=True)
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = ['first_name', 'date_of_birth']
 
