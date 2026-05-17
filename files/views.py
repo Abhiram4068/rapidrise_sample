@@ -3,7 +3,7 @@ from files.services import StorageService
 from django.conf import settings
 from django.shortcuts import render
 from rest_framework.views import APIView
-from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.permissions import IsAuthenticated, AllowAny, IsAdminUser
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -14,11 +14,13 @@ from files.serializers import (
     RegisterSerializer, LoginSerializer, UserProfileSerializer,ChangePasswordSerialzier, DeactivateAccountSerializer, FileUploadSerialzier, FilesListSerializer, FileUpdateSerializer ,FileShareSerializer, FileShareCreateSerializer, PublicFileSerializer,CollectionSerializer, CollectionFileSerializer
     ,ScheduledMailSerializer, FileShareListSerializer, ReportQuerySerializer, ResetPasswordSerializer, ForgotPasswordSerializer, ReactivationRequestSerializer
     )
+from files.models import ReactivationRequest
 from files.services import (
     create_user, get_designation, authenticate_and_generate_token, AuthenticationError ,AuthService, UserProfileService, FileService, FileShareService, ViewFileShareService, CollectionService, ReportService, AccountService
     )
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.exceptions import NotFound
+from files.authentication import CookieJWTAuthentication
 
 
 import logging
@@ -152,6 +154,16 @@ class TokenRefreshCookieView(APIView):
                 from django.contrib.auth import get_user_model
                 User = get_user_model()
                 user = User.objects.get(id=user_id)
+                
+                # ✅ Check account status
+                if hasattr(user, "account_status") and user.account_status in ["blocked", "deleted"]:
+                    response = Response(
+                        {"detail": f"Access denied. Your account is {user.account_status}."},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+                    _clear_auth_cookies(response)
+                    return response
+
                 user_data = UserProfileSerializer(user, context={"request": request}).data
                 user_data["authenticated"] = True
                 user_data["account_status"] = user.account_status
@@ -262,6 +274,31 @@ class ReactivationRequestView(APIView):
     permission_classes = [IsAuthenticated]
     serializer_class = ReactivationRequestSerializer
 
+    def get(self, request):
+        # Admin can search through all requests, regular users see their own
+        if request.user.is_staff or request.user.is_superuser:
+            queryset = ReactivationRequest.objects.all().order_by('-created_at')
+            search = request.query_params.get('search', '').strip()
+            if search:
+                queryset = queryset.filter(
+                    Q(user__email__icontains=search) |
+                    Q(user__first_name__icontains=search) |
+                    Q(user__last_name__icontains=search) |
+                    Q(reason__icontains=search)
+                )
+        else:
+            queryset = ReactivationRequest.objects.filter(user=request.user).order_by('-created_at')
+
+        paginator = DefaultPageNumberPagination()
+        page = paginator.paginate_queryset(queryset, request, view=self)
+        
+        if page is not None:
+            serializer = self.serializer_class(page, many=True, context={'request': request})
+            return paginator.get_paginated_response(serializer.data)
+
+        serializer = self.serializer_class(queryset, many=True, context={'request': request})
+        return Response(serializer.data)
+
     def post(self, request):
         serializer = self.serializer_class(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -275,6 +312,39 @@ class ReactivationRequestView(APIView):
             {"message": "Reactivation request submitted successfully. The admin will review it soon."},
             status=status.HTTP_201_CREATED
         )
+
+class ReactivationResolveView(APIView):
+    authentication_classes = [CookieJWTAuthentication]
+    permission_classes = [IsAdminUser]
+
+    def post(self, request, pk):
+        try:
+            # Handle both UUID and potentially older integer IDs if they exist
+            react_req = ReactivationRequest.objects.get(pk=pk)
+        except (ReactivationRequest.DoesNotExist, ValidationError):
+            return Response({"error": "Request not found or invalid ID format"}, status=status.HTTP_404_NOT_FOUND)
+
+        action = request.data.get('action')
+        user_id = request.data.get('user_id')
+
+        # Optional: Verify user_id consistency if provided
+        if user_id and react_req.user.id != int(user_id):
+            return Response({"error": "User ID mismatch"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        if action == 'approve':
+            user = react_req.user
+            user.account_status = 'ACTIVE'
+            user.is_active = True
+            user.save()
+            react_req.is_resolved = True
+            react_req.save()
+            return Response({"message": "Account reactivated successfully"})
+        elif action == 'reject':
+            react_req.is_resolved = True
+            react_req.save()
+            return Response({"message": "Reactivation request rejected. Status remains deactivated."})
+        
+        return Response({"error": "Invalid action"}, status=status.HTTP_400_BAD_REQUEST)
 
 import time
 from rest_framework.exceptions import ValidationError

@@ -38,4 +38,12 @@ class CookieJWTAuthentication(JWTAuthentication):
         if user is None:
             raise AuthenticationFailed("User not found")
 
+        # ✅ Check account status (e.g., Blocked, Deleted)
+        # This ensures that even if a user has a valid token, they are blocked immediately
+        # if their account status changes.
+        if hasattr(user, "account_status"):
+            # In models.py, BLOCKED is "blocked" and DELETED is "deleted"
+            if user.account_status in ["blocked", "deleted"]:
+                raise AuthenticationFailed(f"Access denied. Your account is {user.account_status}.")
+
         return (user, validated_token)

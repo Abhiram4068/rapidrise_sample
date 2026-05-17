@@ -76,7 +76,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = User
-        fields = ["id", "email", "first_name", "last_name", "designation", "date_joined", "total_files", "date_of_birth", "status", "account_status", "storage_used_bytes", "has_pending_reactivation_request"]
+        fields = ["id", "email", "first_name", "last_name", "designation", "date_joined", "total_files", "date_of_birth", "status", "account_status", "storage_used_bytes", "has_pending_reactivation_request", "is_staff", "is_superuser"]
         read_only_fields = fields
 
     def get_date_joined(self, obj):
@@ -115,10 +115,18 @@ class ChangePasswordSerialzier(serializers.Serializer):
         return data
 
 class ReactivationRequestSerializer(serializers.ModelSerializer):
+    user_id = serializers.IntegerField(source='user.id', read_only=True)
+    user_email = serializers.EmailField(source='user.email', read_only=True)
+    user_full_name = serializers.SerializerMethodField()
+    designation = serializers.CharField(source='user.designation', read_only=True)
+
     class Meta:
         model = ReactivationRequest
-        fields = ["id", "reason", "created_at", "is_resolved"]
-        read_only_fields = ["id", "created_at", "is_resolved"]
+        fields = ["id", "user_id", "user_email", "user_full_name", "designation", "reason", "created_at", "is_resolved"]
+        read_only_fields = ["id", "user_id", "user_email", "user_full_name", "designation", "created_at", "is_resolved"]
+
+    def get_user_full_name(self, obj):
+        return f"{obj.user.first_name} {obj.user.last_name}"
 
 class DeactivateAccountSerializer(serializers.Serializer):
     password = serializers.CharField(required=True, write_only=True)

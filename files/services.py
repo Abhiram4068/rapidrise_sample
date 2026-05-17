@@ -38,6 +38,7 @@ def create_user(validated_data):
         raise ValueError("Email already exists")
     try:
         with transaction.atomic():
+            validated_data["account_status"] = User.AccountStatus.WAITING_FOR_APPROVAL
             return User.objects.create_user(**validated_data)
     except IntegrityError:
         raise ValueError("Unable to create user. Please try again")
@@ -57,6 +58,14 @@ def authenticate_and_generate_token(email:str, password:str)->dict:
         raise AuthenticationError("Invalid credentials")
     if not user.is_active:
         raise AuthenticationError("Account is disabled")
+    if user.account_status == User.AccountStatus.BLOCKED:
+        raise AuthenticationError("Your account has been blocked by the administrator. Access to this platform has been permanently restricted until reviewed by the admin team. Only an administrator can revoke this restriction and restore account access.")
+    if user.account_status == User.AccountStatus.DELETED:
+        raise AuthenticationError("Your account has been deleted by the administrator. Access to this platform has been permanently restricted until reviewed by the admin team. Only an administrator can revoke this restriction and restore account access.")
+    if user.account_status == User.AccountStatus.WAITING_FOR_APPROVAL:
+        raise AuthenticationError("Your account is awaiting admin approval.")
+    user.last_login=timezone.now()
+    user.save(update_fields=['last_login'])
     refresh=RefreshToken.for_user(user)
     return {
         'user':user,
