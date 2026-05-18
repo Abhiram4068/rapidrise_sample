@@ -9,12 +9,15 @@ User = get_user_model()
 class AdminUserService:
     @staticmethod
     def get_users_for_admin():
+        from django.db.models import Q
         allowed_statuses = [
             User.AccountStatus.ACTIVE,
             User.AccountStatus.BLOCKED,
             User.AccountStatus.DEACTIVATED
         ]
-        return User.objects.filter(account_status__in=allowed_statuses).order_by('-date_joined')
+        return User.objects.filter(
+            Q(account_status__in=allowed_statuses) | Q(is_active=True)
+        ).distinct().order_by('-date_joined')
 
     @staticmethod
     def get_blocked_users():

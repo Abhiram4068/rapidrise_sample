@@ -45,6 +45,7 @@ class AdminReactivationRequestListView(APIView):
                     Q(user__email__icontains=search) |
                     Q(user__first_name__icontains=search) |
                     Q(user__last_name__icontains=search) |
+                    Q(user__account_status__icontains=search) |
                     Q(reason__icontains=search)
                 )
         else:
@@ -93,12 +94,19 @@ class AdminUserListView(APIView):
         users = AdminUserService.get_users_for_admin()
         search = request.query_params.get('search', '').strip()
         if search:
-            users = users.filter(
+            search_query = (
                 models.Q(first_name__icontains=search) |
                 models.Q(last_name__icontains=search)  |
                 models.Q(email__icontains=search)      |
-                models.Q(designation__icontains=search)
+                models.Q(designation__icontains=search) |
+                models.Q(account_status__icontains=search)
             )
+            if search.lower() == 'active':
+                search_query |= models.Q(is_active=True)
+            elif search.lower() == 'inactive':
+                search_query |= models.Q(is_active=False)
+            
+            users = users.filter(search_query)
         paginator = StandardResultsPagination()
         page = paginator.paginate_queryset(users, request)
         serializer = AdminUserListSerializer(page, many=True)
@@ -136,12 +144,17 @@ class AdminViewNewUserRequests(APIView):
         
         search = request.query_params.get('search', '').strip()
         if search:
-            queryset = queryset.filter(
+            search_query = (
                 models.Q(first_name__icontains=search) |
                 models.Q(last_name__icontains=search) |
                 models.Q(email__icontains=search) |
-                models.Q(designation__icontains=search)
+                models.Q(designation__icontains=search) |
+                models.Q(account_status__icontains=search)
             )
+            if search.lower() == 'active':
+                search_query |= models.Q(is_active=True)
+            
+            queryset = queryset.filter(search_query)
 
         paginator = StandardResultsPagination()
         page = paginator.paginate_queryset(
@@ -180,12 +193,14 @@ class AdminBlockedUserListView(APIView):
         users = AdminUserService.get_blocked_users()
         search = request.query_params.get('search', '').strip()
         if search:
-            users = users.filter(
+            search_query = (
                 models.Q(first_name__icontains=search) |
                 models.Q(last_name__icontains=search)  |
                 models.Q(email__icontains=search)      |
-                models.Q(designation__icontains=search)
+                models.Q(designation__icontains=search) |
+                models.Q(account_status__icontains=search)
             )
+            users = users.filter(search_query)
         paginator = StandardResultsPagination()
         page = paginator.paginate_queryset(users, request)
         serializer = AdminUserListSerializer(page, many=True)
@@ -198,12 +213,14 @@ class AdminDeletedUserListView(APIView):
         users = AdminUserService.get_deleted_users()
         search = request.query_params.get('search', '').strip()
         if search:
-            users = users.filter(
+            search_query = (
                 models.Q(first_name__icontains=search) |
                 models.Q(last_name__icontains=search)  |
                 models.Q(email__icontains=search)      |
-                models.Q(designation__icontains=search)
+                models.Q(designation__icontains=search) |
+                models.Q(account_status__icontains=search)
             )
+            users = users.filter(search_query)
         paginator = StandardResultsPagination()
         page = paginator.paginate_queryset(users, request)
         serializer = AdminUserListSerializer(page, many=True)
