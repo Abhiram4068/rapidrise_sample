@@ -540,22 +540,32 @@ class StorageSummarySerializer(serializers.Serializer):
 
 
 from rest_framework import serializers
-from .models import ProjectThread, ProjectNode, NodeDependency, NodeFile, NodeActivity
+from .models import ProjectThread, ProjectNode, NodeDependency, NodeFile, NodeActivity, ProjectStage
 
 
 # ─── Thread ───────────────────────────────────────────────────────────────────
 
+class ProjectStageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProjectStage
+        fields = ["id", "thread", "name", "created_at"]
+        read_only_fields = ["id", "thread", "created_at"]
+
 class ThreadSerializer(serializers.ModelSerializer):
     created_by = serializers.StringRelatedField(read_only=True)
     node_count = serializers.SerializerMethodField()
+    file_count = serializers.SerializerMethodField()
 
     class Meta:
         model = ProjectThread
-        fields = ["id", "title", "description", "created_by", "created_at", "node_count"]
+        fields = ["id", "title", "description", "created_by", "created_at", "node_count", "file_count"]
         read_only_fields = ["id", "created_by", "created_at"]
 
     def get_node_count(self, obj):
         return obj.nodes.filter(is_deleted=False).count()
+    def get_file_count(self, obj):
+        from files.models import NodeFile
+        return NodeFile.objects.filter(node__thread=obj).count()
 
 
 class ThreadCreateSerializer(serializers.ModelSerializer):
@@ -642,8 +652,17 @@ class DependencySerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "created_at"]
 
     def validate(self, data):
-        if data["source_node"] == data["target_node"]:
+        src = data.get("source_node")
+        tgt = data.get("target_node")
+        if src == tgt:
             raise serializers.ValidationError("A node cannot depend on itself.")
+            
+        if NodeDependency.objects.filter(source_node=src, target_node=tgt).exists():
+            raise serializers.ValidationError("This dependency already exists.")
+
+        if NodeDependency.objects.filter(source_node=tgt, target_node=src).exists():
+            raise serializers.ValidationError(f"Cannot create dependency: \"{tgt.title}\" already depends on \"{src.title}\".")
+            
         return data
 
 
@@ -669,7 +688,7 @@ class NodeFileUploadSerializer(serializers.Serializer):
     file = serializers.FileField()
 
     def validate_file(self, value):
-        max_size_mb = 50
+        max_size_mb = 100
         if value.size > max_size_mb * 1024 * 1024:
             raise serializers.ValidationError(f"File size must not exceed {max_size_mb} MB.")
         return value

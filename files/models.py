@@ -278,6 +278,18 @@ class ProjectThread(models.Model):
         ordering = ["-created_at"]
  
  
+class ProjectStage(models.Model):
+    thread = models.ForeignKey(ProjectThread, on_delete=models.CASCADE, related_name="stages")
+    name = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.thread.title} - {self.name}"
+
+    class Meta:
+        ordering = ["created_at"]
+
+
 class ProjectNode(models.Model):
  
     class Status(models.TextChoices):
@@ -303,7 +315,7 @@ class ProjectNode(models.Model):
     )
  
     # Table layout position
-    stage = models.IntegerField(default=0)
+    stage = models.ForeignKey(ProjectStage, on_delete=models.SET_NULL, null=True, blank=True, related_name="nodes")
     row = models.IntegerField(default=0)
  
     created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name="nodes")

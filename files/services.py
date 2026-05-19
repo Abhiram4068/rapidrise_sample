@@ -33,7 +33,7 @@ from datetime import datetime
 from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
 from django.utils.encoding import force_bytes, force_str
 from django.contrib.auth.tokens import default_token_generator
-from .models import NodeActivity, NodeDependency, NodeFile, ProjectNode, ProjectThread
+from .models import NodeActivity, NodeDependency, NodeFile, ProjectNode, ProjectThread, ProjectStage
 
 
 
@@ -1656,13 +1656,17 @@ class ThreadService:
         """Create a thread and auto-add the root node."""
         with transaction.atomic():
             thread = ProjectThread.objects.create(created_by=user, **validated_data)
+            
+            # Create a default stage
+            stage1 = ProjectStage.objects.create(thread=thread, name="Stage 1")
+            
             # Auto-create the root node
             root = ProjectNode.objects.create(
                 thread=thread,
                 title=thread.title,
                 description="Project root node",
                 created_by=user,
-                stage=0,
+                stage=stage1,
                 row=0,
                 status="ACTIVE"
             )
@@ -1676,14 +1680,15 @@ class ThreadService:
  
     @staticmethod
     def get_graph(thread_id: int) -> dict:
-        """Return all nodes and dependency edges for ReactFlow."""
+        """Return all nodes, dependency edges, and stages for ReactFlow."""
         nodes = ProjectNode.objects.filter(thread_id=thread_id, is_deleted=False)
         node_ids = nodes.values_list("id", flat=True)
         edges = NodeDependency.objects.filter(
             source_node_id__in=node_ids,
             target_node_id__in=node_ids,
         )
-        return {"nodes": nodes, "edges": edges}
+        stages = ProjectStage.objects.filter(thread_id=thread_id)
+        return {"nodes": nodes, "edges": edges, "stages": stages}
  
  
 # ─── Node ─────────────────────────────────────────────────────────────────────
@@ -1696,7 +1701,19 @@ class NodeService:
         # Auto-position: offset from parent if given
         parent = validated_data.get("parent_node")
         if parent and not validated_data.get("stage"):
-            validated_data["stage"] = parent.stage + 1
+            # Try to find the next stage in the sequence
+            current_stage = parent.stage
+            next_stage = ProjectStage.objects.filter(
+                thread=thread, 
+                created_at__gt=current_stage.created_at
+            ).order_by('created_at').first()
+            
+            if next_stage:
+                validated_data["stage"] = next_stage
+            else:
+                # If no next stage exists, stay in current stage or we could create one,
+                # but better to stick to current if we don't know the name.
+                validated_data["stage"] = current_stage
             validated_data["row"] = 0
  
         node = ProjectNode.objects.create(thread=thread, created_by=user, **validated_data)
@@ -1714,7 +1731,15 @@ class NodeService:
         validated_data["parent_node"] = parent_node
         validated_data["branch_root"] = parent_node
         # Branches offset on stage/row
-        validated_data["stage"] = parent_node.stage + 1
+        # Try to find the next stage
+        current_stage = parent_node.stage
+        next_stage = ProjectStage.objects.filter(
+            thread=thread, 
+            created_at__gt=current_stage.created_at
+        ).order_by('created_at').first()
+        
+        validated_data["stage"] = next_stage if next_stage else current_stage
+        
         sibling_count = ProjectNode.objects.filter(branch_root=parent_node).count()
         validated_data["row"] = sibling_count + 1
  
@@ -1786,9 +1811,10 @@ class NodeService:
             )
  
     @staticmethod
-    def update_position(node: ProjectNode, stage: int, row: int):
+    def update_position(node: ProjectNode, stage_id: int, row: int):
         """Quick positional update from canvas drag — no activity log needed."""
-        node.stage = stage
+        if stage_id:
+            node.stage_id = stage_id
         node.row = row
         node.save(update_fields=["stage", "row"])
  
@@ -1855,11 +1881,26 @@ class DependencyService:
  
     @staticmethod
     def add_dependency(source: ProjectNode, target: ProjectNode, dependency_type: str, user) -> NodeDependency:
+        if source.id == target.id:
+            raise DRFValidationError("A node cannot depend on itself.")
+
+        if source.thread_id != target.thread_id:
+            raise DRFValidationError("Nodes must belong to the same thread to create a dependency.")
+
+        if NodeDependency.objects.filter(source_node=source, target_node=target).exists():
+            raise DRFValidationError(f"A dependency already exists from \"{source.title}\" to \"{target.title}\".")
 
         if DependencyService._has_cycle(source.id, target.id):
-            raise DRFValidationError("Adding this dependency would create a circular reference.")
-        if source.status==ProjectNode.Status.INACTIVE or source.status==ProjectNode.Status.BLOCKED:
-            raise DRFValidationError("Cannot add dependency from an inactive node.")
+            raise DRFValidationError("Adding this dependency would create a circular reference (cycle).")
+
+        if source.status == ProjectNode.Status.INACTIVE:
+            raise DRFValidationError("Cannot create a dependency from an inactive node.")
+
+        if source.status == ProjectNode.Status.BLOCKED:
+            raise DRFValidationError("Cannot create a dependency from a blocked node.")
+
+        if source.status == ProjectNode.Status.ARCHIVED:
+            raise DRFValidationError("Cannot create dependencies from completed/archived nodes.")
  
         # Ensure only one outgoing dependency from source (cascading deactivation)
         old_deps = NodeDependency.objects.filter(source_node=source)
