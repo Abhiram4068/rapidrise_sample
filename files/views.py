@@ -19,8 +19,9 @@ from files.services import (
     create_user, get_designation, authenticate_and_generate_token, AuthenticationError ,AuthService, UserProfileService, FileService, FileShareService, ViewFileShareService, CollectionService, ReportService, AccountService
     )
 from rest_framework.pagination import PageNumberPagination
-from rest_framework.exceptions import NotFound
+from rest_framework.exceptions import NotFound, ValidationError as DRFValidationError
 from files.authentication import CookieJWTAuthentication
+from files.exceptions import StorageLimitExceeded
 
 
 import logging
@@ -89,6 +90,7 @@ class RegisterView(APIView):
             status=status.HTTP_201_CREATED
         )
 class DesignationListView(APIView):
+    authentication_classes = []
     permission_classes = [AllowAny]
 
     def get(self, request):
@@ -349,6 +351,76 @@ class ReactivationResolveView(APIView):
 import time
 from rest_framework.exceptions import ValidationError
 
+class ChunkUploadView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        upload_id = request.data.get("upload_id")
+        chunk_index = request.data.get("chunk_index")
+        total_chunks = request.data.get("total_chunks")
+        file_name = request.data.get("file_name")
+        file_size = request.data.get("file_size")
+        content_type = request.data.get("content_type")
+        file_chunk = request.FILES.get("file")
+        action = request.data.get("action")
+        description = request.data.get("description")
+
+        if not all([upload_id, chunk_index, total_chunks, file_chunk]):
+            return Response({"error": "Missing required chunk parameters"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            # 0. Pre-check storage for the first chunk
+            if str(chunk_index) == "0":
+                max_storage = 1 * 1024 * 1024 * 1024
+                request.user.refresh_from_db()
+                current_usage = request.user.storage_used_bytes
+                if int(file_size) + current_usage > max_storage:
+                    available = max_storage - current_usage
+                    mb = 1024 * 1024
+                    gb = 1024 * 1024 * 1024
+                    if available < mb:
+                        avail_str = f"{available / 1024:.2f} KB"
+                    elif available < gb:
+                        avail_str = f"{available / mb:.2f} MB"
+                    else:
+                        avail_str = f"{available / gb:.2f} GB"
+                    raise DRFValidationError({"error": f"Insufficient storage space. Only {avail_str} left. Try deleting some files!"})
+
+            # 1. Store chunk
+            FileService.store_chunk(upload_id, chunk_index, file_chunk)
+             
+            # 2. If it's the last chunk, assemble it
+            if int(chunk_index) == int(total_chunks) - 1:
+                result = FileService.complete_chunk_upload(
+                    user=request.user,
+                    upload_id=upload_id,
+                    total_chunks=total_chunks,
+                    file_name=file_name,
+                    file_size=file_size,
+                    content_type=content_type,
+                    description=description,
+                    action=action
+                )
+                return Response({
+                    "message": "File uploaded successfully",
+                    "file": result
+                }, status=status.HTTP_201_CREATED)
+            
+            # Otherwise, just acknowledge chunk
+            return Response({"message": f"Chunk {chunk_index} uploaded successfully"}, status=status.HTTP_200_OK)
+
+        except DRFValidationError as e:
+            detail = e.detail
+            if isinstance(detail, dict):
+                detail = {k: v[0] if isinstance(v, list) and len(v) == 1 else v for k, v in detail.items()}
+            logger.warning(f"Validation error during chunk upload | detail={detail}")
+            return Response(detail, status=status.HTTP_409_CONFLICT)
+        except StorageLimitExceeded as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            logger.error(f"Unexpected error during chunk upload | error={str(e)}")
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 class FileUploadView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -368,28 +440,44 @@ class FileUploadView(APIView):
 
         try:
             logger.info(f"{len(files)} files received for upload | user_id={request.user.id}")
-            uploaded_files = FileService.upload_files(user=request.user, files=files, action=action)
+            result = FileService.upload_files(
+                user=request.user, 
+                files=files, 
+                action=action, 
+                description=request.data.get("description")
+            )
+            
+            uploaded_count = len(result["uploaded"])
+            failed_count = len(result["failed"])
+            
             duration = time.time() - start_time
             logger.info(
-                f"File upload success | user_id={request.user.id} | "
-                f"count={len(uploaded_files)} | duration={duration:.2f}s"
+                f"File upload cycle complete | user_id={request.user.id} | "
+                f"success={uploaded_count} | failed={failed_count} | duration={duration:.2f}s"
             )
+
+            # If everything failed, might want a different status code, but 207 Multi-Status or 201 with failed list is common
+            status_code = status.HTTP_201_CREATED if uploaded_count > 0 else status.HTTP_400_BAD_REQUEST
+            
             return Response(
-                {'message': f'{len(uploaded_files)} file(s) uploaded successfully', 'files': uploaded_files},
-                status=status.HTTP_201_CREATED
+                {
+                    'message': f'{uploaded_count} file(s) uploaded, {failed_count} failed',
+                    'uploaded': result["uploaded"],
+                    'failed': result["failed"]
+                },
+                status=status_code
             )
 
         except ValidationError as e:
             detail = e.detail
-            # DRF wraps dict values in lists — flatten them back
             if isinstance(detail, dict):
                 detail = {k: v[0] if isinstance(v, list) and len(v) == 1 else v for k, v in detail.items()}
-            logger.warning(f"Duplicate file detected | user_id={request.user.id} | detail={detail}")
+            logger.warning(f"Validation error during upload | user_id={request.user.id} | detail={detail}")
             return Response(detail, status=status.HTTP_409_CONFLICT)
 
         except Exception as e:
-            logger.error(f"File upload failed | user_id={request.user.id} | error={str(e)}")
-            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            logger.error(f"Unexpected error during file upload | user_id={request.user.id} | error={str(e)}")
+            return Response({'error': 'An unexpected error occurred during upload.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 class FileDownloadView(APIView):
     permission_classes=[IsAuthenticated]
     def get(self, request, file_id):

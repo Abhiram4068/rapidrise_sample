@@ -159,7 +159,8 @@ class FileUploadSerialzier(serializers.Serializer):
         'application/vnd.ms-excel',
         'application/zip',
         'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        'image/webp'
+        'image/webp',
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation'
         
     ]
         

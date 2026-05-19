@@ -1,6 +1,6 @@
 from django.urls import path
 from files.views import (
-    RegisterView, LoginView, TokenRefreshCookieView,DesignationListView, ChangePasswordView,LogoutView, ForgotPasswordView,ResetPasswordView,UserProfileView, FileUploadView, ClearTrash, FileDownloadView, FileViewInlineView, FileListView, FileUpdateView, ArchiveFile, FileArchiveView, FileUnarchiveView,FileDetailView,FileDeleteView, FileShareCreateListUpdateView, PublicFileAccessView,
+    RegisterView, LoginView, TokenRefreshCookieView,DesignationListView, ChangePasswordView,LogoutView, ForgotPasswordView,ResetPasswordView,UserProfileView, FileUploadView, ChunkUploadView, ClearTrash, FileDownloadView, FileViewInlineView, FileListView, FileUpdateView, ArchiveFile, FileArchiveView, FileUnarchiveView,FileDetailView,FileDeleteView, FileShareCreateListUpdateView, PublicFileAccessView,
     CollectionListCreateView, CollectionDetailView, CollectionFileView, FileStarredList, CollectionStarredList, RecentView, FileShareScheduleCreateListView, FileShareScheduleCalendarView, RevokeScheduledMailView, ReportDownloadView, ArchiveDeleteFileView, StorageSummaryView, DashboardView, StorageManagementView, StoragePermanentDeleteView,
     DeactivateAccountView, ReactivationRequestView, ReactivationResolveView
     )
@@ -28,6 +28,7 @@ urlpatterns=[
     path("auth/change-password/",ChangePasswordView.as_view(), name="change-password" ),
     #file download urls
     path('files/', FileUploadView.as_view(), name='file-upload'),
+    path('files/upload/chunk/', ChunkUploadView.as_view(), name='chunk-upload'),
     path('<uuid:file_id>/file-download/', FileDownloadView.as_view(), name='file-download'),
     path('<uuid:file_id>/file-view-inline/', FileViewInlineView.as_view(), name='file-view-inline'),
     path('file-list/', FileListView.as_view(), name='file-list'),

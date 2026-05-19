@@ -71,9 +71,9 @@ class AdminResolveReactivationView(APIView):
             
             if action == 'approve':
                 user = react_req.user
-                user.account_status = 'active'
+                user.account_status = User.AccountStatus.ACTIVE
                 user.save()
-                print(user.account_status)
+                
                 react_req.is_resolved = True
                 react_req.save()
                 return Response({"message": "Account reactivated successfully"})

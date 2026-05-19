@@ -38,3 +38,7 @@ node_files/
 db.sqlite3
 
 celerybeat-schedule
+
+# Temporary files
+temp_uploads/
+uploads
