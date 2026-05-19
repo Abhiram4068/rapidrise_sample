@@ -23,7 +23,12 @@ from .exceptions import StorageLimitExceeded
 import logging
 logger = logging.getLogger(__name__)
 import os
-from rest_framework.exceptions import ValidationError
+import threading
+import shutil
+import time
+import uuid
+from rest_framework.exceptions import ValidationError as DRFValidationError
+from django.core.exceptions import ValidationError as DjangoValidationError
 from datetime import datetime
 from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
 from django.utils.encoding import force_bytes, force_str
@@ -189,7 +194,7 @@ class AccountService:
         Submit a request to the admin for account reactivation.
         """
         if ReactivationRequest.objects.filter(user=user, is_resolved=False).exists():
-            raise ValidationError("You already have a pending reactivation request.")
+            raise DRFValidationError("You already have a pending reactivation request.")
         
         request = ReactivationRequest.objects.create(
             user=user,
@@ -259,70 +264,320 @@ class FileService:
     secure downloads with ownership validation,
     user-scoped listing, and soft deletion.
     """
-    @staticmethod
     
-    def upload_files(user, files: List, description=None, action=None):
-        uploaded_files = []
+    @staticmethod
+    def store_chunk(upload_id, chunk_index, chunk_file):
+        """
+        Stores a single chunk of a file upload.
+        """
+        import re
+        if not re.match(r'^[a-zA-Z0-9_-]+$', str(upload_id)):
+            raise Exception("Invalid upload_id")
+        
+        temp_dir = os.path.join(settings.MEDIA_ROOT, "temp_uploads", str(upload_id))
+        os.makedirs(temp_dir, exist_ok=True)
+        
+        chunk_path = os.path.join(temp_dir, f"chunk_{chunk_index}")
+        
+        MAX_RETRIES = 3
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                if hasattr(chunk_file, 'seek'):
+                    chunk_file.seek(0)
+                with open(chunk_path, "wb+") as dest:
+                    for data in chunk_file.chunks():
+                        dest.write(data)
+                return chunk_path
+            except Exception as e:
+                logger.warning(f"Chunk upload failed attempt {attempt}: {str(e)}")
+                if os.path.exists(chunk_path):
+                    os.remove(chunk_path)
+                if attempt == MAX_RETRIES:
+                    raise
+                time.sleep(1)
 
-        for file_obj in files:
+    @staticmethod
+    def complete_chunk_upload(user, upload_id, total_chunks, file_name, file_size, content_type, description=None, action=None):
+        """
+        Assembles chunks and completes the upload.
+        """
+        import re
+        if not re.match(r'^[a-zA-Z0-9_-]+$', str(upload_id)):
+            raise Exception("Invalid upload_id")
+            
+        temp_dir = os.path.join(settings.MEDIA_ROOT, "temp_uploads", str(upload_id))
+        if not os.path.exists(temp_dir):
+            raise Exception("Upload session not found")
+            
+        # Verify all chunks exist
+        for i in range(int(total_chunks)):
+            if not os.path.exists(os.path.join(temp_dir, f"chunk_{i}")):
+                raise Exception(f"Missing chunk {i}")
+                
+        # Merge chunks
+        unique_name = f"{uuid.uuid4()}_{file_name}"
+        final_relative_path = f"uploads/{unique_name}"
+        final_full_path = os.path.join(settings.MEDIA_ROOT, final_relative_path)
+        os.makedirs(os.path.dirname(final_full_path), exist_ok=True)
+        
+        hash_md5 = hashlib.md5()
+        actual_size = 0
+        
+        try:
+            with open(final_full_path, "wb+") as dest:
+                for i in range(int(total_chunks)):
+                    chunk_path = os.path.join(temp_dir, f"chunk_{i}")
+                    with open(chunk_path, "rb") as ch_file:
+                        while True:
+                            data = ch_file.read(8192)
+                            if not data:
+                                break
+                            dest.write(data)
+                            hash_md5.update(data)
+                            actual_size += len(data)
+            
+            if actual_size != int(file_size):
+                raise Exception("Incomplete upload detected: size mismatch")
+                
+        except Exception as e:
+            if os.path.exists(final_full_path):
+                os.remove(final_full_path)
+            raise Exception(f"Failed to assemble chunks: {str(e)}")
+            
+        checksum = hash_md5.hexdigest()
+        
+        # Cleanup temp dir
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        
+        uploaded_path = final_relative_path
+        
+        class DummyFile:
+            def __init__(self, name, size, type):
+                self.name = name
+                self.size = size
+                self.content_type = type
+                
+        file_obj = DummyFile(file_name, int(file_size), content_type)
+        
+        try:
             with transaction.atomic():
+                existing_file = File.objects.filter(
+                    checksum=checksum, 
+                    user=user, 
+                    is_deleted=False
+                ).first()
+
+                if existing_file:
+                    if not action:
+                        if os.path.exists(final_full_path):
+                            os.remove(final_full_path)
+                        raise DRFValidationError({
+                            "duplicate": True,
+                            "message": f"File '{file_obj.name}' already exists",
+                            "existing_file_id": str(existing_file.id),
+                            "file_name": file_obj.name,
+                        })
+
+                    if action == "replace":
+                        StorageService.release(user.id, existing_file.file_size)
+                        StorageService.claim(user.id, file_obj.size)
+                        
+                        if existing_file.file:
+                            existing_file.file.delete(save=False)
+                        
+                        existing_file.file.name = uploaded_path
+                        existing_file.original_name = file_obj.name
+                        existing_file.file_size = file_obj.size
+                        existing_file.content_type = file_obj.content_type
+                        existing_file.save()
+                        
+                        return {
+                            "id": str(existing_file.id),
+                            "name": existing_file.original_name,
+                            "status": "success"
+                        }
+
+                    if action == "keep_both":
+                        file_obj.name = FileService._rename_file(file_obj.name)
+
                 StorageService.claim(user.id, file_obj.size)
-                checksum = FileService._calculate_checksum(file_obj)
-                existing_file = File.objects.filter(checksum=checksum, user=user, is_deleted=False).first()
-
-                # Duplicate with no action → ask the frontend what to do
-                if existing_file and not action:
-                    raise ValidationError({
-                        "duplicate": True,
-                        "message": f"File '{file_obj.name}' already exists",
-                        "existing_file_id": str(existing_file.id),
-                        "file_name": file_obj.name,
-                    })
-
-                # Replace
-                if existing_file and action == "replace":
-                    old_path = existing_file.file.name
-                    existing_file.file.delete(save=False)
-                    existing_file.file = file_obj
-                    existing_file.original_name = file_obj.name
-                    existing_file.file_size = file_obj.size
-                    existing_file.content_type = file_obj.content_type
-                    existing_file.save()
-                    logger.info(f"File replaced | user_id={user.id} | old={old_path} | new={file_obj.name}")
-                    uploaded_files.append({
-                        'id': str(existing_file.id),
-                        'name': existing_file.original_name,
-                        'size': existing_file.file_size,
-                        'content_type': existing_file.content_type,
-                        'checksum': existing_file.checksum,
-                        'created_at': existing_file.created_at,
-                    })
-                    continue  # ← was `return`, this lets remaining files still process
-
-                # Keep both
-                if existing_file and action == "keep_both":
-                    file_obj.name = FileService._rename_file(file_obj.name)
-                    logger.info(f"Keeping both | user_id={user.id} | renamed to={file_obj.name}")
-
-                # Fresh upload (or keep_both falls through to here)
+                
                 new_file = File.objects.create(
                     user=user,
-                    file=file_obj,
+                    file=uploaded_path,
                     original_name=file_obj.name,
                     file_size=file_obj.size,
                     content_type=file_obj.content_type,
                     checksum=checksum,
+                    description=description
                 )
-                uploaded_files.append({
-                    'id': str(new_file.id),
-                    'name': new_file.original_name,
-                    'size': new_file.file_size,
-                    'content_type': new_file.content_type,
-                    'checksum': new_file.checksum,
-                    'created_at': new_file.created_at,
+                
+                return {
+                    "id": str(new_file.id),
+                    "name": new_file.original_name,
+                    "status": "success"
+                }
+
+        except Exception as e:
+            if os.path.exists(final_full_path):
+                os.remove(final_full_path)
+            raise
+
+    @staticmethod
+    def _safe_store_file(file_obj):
+        """
+        Manually handles physical storage with retries and size validation.
+        Calculates checksum during write to avoid multiple reads.
+        Returns (relative_path, checksum).
+        """
+        MAX_RETRIES = 3
+        unique_name = f"{uuid.uuid4()}_{file_obj.name}"
+        temp_relative_path = f"temp_uploads/{unique_name}.uploading"
+        final_relative_path = f"uploads/{unique_name}"
+
+        temp_full_path = os.path.join(settings.MEDIA_ROOT, temp_relative_path)
+        final_full_path = os.path.join(settings.MEDIA_ROOT, final_relative_path)
+
+        # Ensure directories exist
+        os.makedirs(os.path.dirname(temp_full_path), exist_ok=True)
+        os.makedirs(os.path.dirname(final_full_path), exist_ok=True)
+
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                hash_md5 = hashlib.md5()
+                if hasattr(file_obj, 'seek'):
+                    file_obj.seek(0)
+
+                with open(temp_full_path, "wb+") as destination:
+                    for chunk in file_obj.chunks():
+                        destination.write(chunk)
+                        hash_md5.update(chunk)
+
+                uploaded_size = os.path.getsize(temp_full_path)
+                if uploaded_size != file_obj.size:
+                    raise Exception("Incomplete upload detected: size mismatch")
+
+                # Atomic move to final location
+                shutil.move(temp_full_path, final_full_path)
+                return final_relative_path, hash_md5.hexdigest()
+
+            except Exception as e:
+                logger.warning(f"Upload attempt {attempt} failed for {file_obj.name}: {str(e)}")
+                if os.path.exists(temp_full_path):
+                    os.remove(temp_full_path)
+                
+                if attempt == MAX_RETRIES:
+                    raise Exception(f"Failed to store file after {MAX_RETRIES} attempts: {str(e)}")
+                
+                time.sleep(2)
+
+    @staticmethod
+    def upload_files(user, files: List, description=None, action=None):
+        """
+        Handles batch upload with deduplication logic (replace/keep_both).
+        Check for duplicates occurs AFTER physical storage to ensure data integrity.
+        """
+        uploaded_files = []
+        failed_files = []
+
+        for file_obj in files:
+            uploaded_path = None
+            try:
+                # 1. Physical storage first (returns path and checksum)
+                uploaded_path, checksum = FileService._safe_store_file(file_obj)
+                full_path = os.path.join(settings.MEDIA_ROOT, uploaded_path)
+                
+                with transaction.atomic():
+                    # 2. Check for duplicates using the freshly calculated checksum
+                    existing_file = File.objects.filter(
+                        checksum=checksum, 
+                        user=user, 
+                        is_deleted=False
+                    ).first()
+
+                    # 3. Duplicate Logic
+                    if existing_file:
+                        if not action:
+                            # Cleanup stored file since we won't be using it
+                            if os.path.exists(full_path):
+                                os.remove(full_path)
+                            raise DRFValidationError({
+                                "duplicate": True,
+                                "message": f"File '{file_obj.name}' already exists",
+                                "existing_file_id": str(existing_file.id),
+                                "file_name": file_obj.name,
+                            })
+
+                        if action == "replace":
+                            # Storage account adjustment
+                            StorageService.release(user.id, existing_file.file_size)
+                            StorageService.claim(user.id, file_obj.size)
+                            
+                            # Cleanup old file
+                            if existing_file.file:
+                                existing_file.file.delete(save=False)
+                            
+                            existing_file.file.name = uploaded_path
+                            existing_file.original_name = file_obj.name
+                            existing_file.file_size = file_obj.size
+                            existing_file.content_type = file_obj.content_type
+                            existing_file.save()
+                            
+                            uploaded_files.append({
+                                "id": str(existing_file.id),
+                                "name": existing_file.original_name,
+                                "status": "success"
+                            })
+                            continue
+
+                        if action == "keep_both":
+                            # Rename for clarity in DB, physical path is already unique
+                            file_obj.name = FileService._rename_file(file_obj.name)
+
+                    # 4. Storage Quota Check and DB Record Creation
+                    StorageService.claim(user.id, file_obj.size)
+                    
+                    new_file = File.objects.create(
+                        user=user,
+                        file=uploaded_path,
+                        original_name=file_obj.name,
+                        file_size=file_obj.size,
+                        content_type=file_obj.content_type,
+                        checksum=checksum,
+                        description=description
+                    )
+                    
+                    uploaded_files.append({
+                        "id": str(new_file.id),
+                        "name": new_file.original_name,
+                        "status": "success"
+                    })
+
+            except DRFValidationError as e:
+                # e.detail contains the structured {duplicate: True, ...} dict
+                failed_files.append({
+                    "file": file_obj.name,
+                    "status": "failed",
+                    "reason": e.detail 
+                })
+            except Exception as e:
+                # General error - cleanup physical file if it was created
+                if uploaded_path:
+                    full_path = os.path.join(settings.MEDIA_ROOT, uploaded_path)
+                    if os.path.exists(full_path):
+                        os.remove(full_path)
+
+                logger.exception(f"File process failed: {file_obj.name}")
+                failed_files.append({
+                    "file": file_obj.name,
+                    "status": "failed",
+                    "reason": str(e)
                 })
 
-        return uploaded_files
+        return {
+            "uploaded": uploaded_files,
+            "failed": failed_files
+        }
 
     
 
@@ -460,14 +715,6 @@ class FileService:
         file_obj.save(update_fields=['is_deleted'])
         return file_obj
 
-    @staticmethod
-    def _calculate_checksum(file_obj):
-        hash_md5 = hashlib.md5()
-        file_obj.seek(0)
-        for chunk in file_obj.chunks():
-            hash_md5.update(chunk)
-        file_obj.seek(0)
-        return hash_md5.hexdigest()
     
     @staticmethod
     def get_recent_files(user):
@@ -555,7 +802,7 @@ class FileService:
         )
         
 from django.db.models import Sum, Count
-from django.core.exceptions import ValidationError, PermissionDenied
+from django.core.exceptions import PermissionDenied
 from .models import Collection, CollectionFile, File
 
 
@@ -585,7 +832,7 @@ class CollectionService:
                 .get(id=collection_id)
             )
         except Collection.DoesNotExist:
-            raise ValidationError("Collection not found.")
+            raise DRFValidationError("Collection not found.")
 
     @staticmethod
     def create_collection(user, validated_data):
@@ -593,7 +840,7 @@ class CollectionService:
         try:
             return Collection.objects.create(user=user, **validated_data)
         except IntegrityError:
-            raise ValidationError("You already have a collection with this name. Please choose a different name.")
+            raise DRFValidationError("You already have a collection with this name. Please choose a different name.")
 
     @staticmethod
     def update_collection(user, collection_id, validated_data):
@@ -601,14 +848,14 @@ class CollectionService:
         try:
             collection = Collection.objects.get(id=collection_id, user=user)
         except Collection.DoesNotExist:
-            raise ValidationError("Collection not found.")
+            raise DRFValidationError("Collection not found.")
 
         for attr, value in validated_data.items():
                 setattr(collection, attr, value)
         try:
             collection.save()
         except IntegrityError:
-            raise ValidationError("A collection with this name already exists.")
+            raise DRFValidationError("A collection with this name already exists.")
         return collection
 
 
@@ -618,7 +865,7 @@ class CollectionService:
         try:
             collection = Collection.objects.get(id=collection_id, user=user)
         except Collection.DoesNotExist:
-            raise ValidationError("Collection not found.")
+            raise DRFValidationError("Collection not found.")
         collection.delete()
 
     @staticmethod
@@ -632,12 +879,12 @@ class CollectionService:
         try:
             collection = Collection.objects.get(id=collection_id, user=user)
         except Collection.DoesNotExist:
-            raise ValidationError("Collection not found.")
+            raise DRFValidationError("Collection not found.")
 
         try:
             file = File.objects.get(id=file_id, user=user)
         except File.DoesNotExist:
-            raise ValidationError("File not found.")
+            raise DRFValidationError("File not found.")
 
         collection_file, created = CollectionFile.objects.get_or_create(
             collection=collection,
@@ -646,7 +893,7 @@ class CollectionService:
         )
 
         if not created:
-            raise ValidationError("This file is already in the collection.")
+            raise DRFValidationError("This file is already in the collection.")
 
         return collection_file
     
@@ -657,7 +904,7 @@ class CollectionService:
         try:
             collection = Collection.objects.get(id=collection_id, user=user)
         except Collection.DoesNotExist:
-            raise ValidationError("Collection not found.")
+            raise DRFValidationError("Collection not found.")
         
         return CollectionFile.objects.filter(
             collection=collection,
@@ -676,14 +923,14 @@ class CollectionService:
         try:
             collection = Collection.objects.get(id=collection_id, user=user)
         except Collection.DoesNotExist:
-            raise ValidationError("Collection not found.")
+            raise DRFValidationError("Collection not found.")
 
         deleted_count, _ = CollectionFile.objects.filter(
             collection=collection, file__id=file_id
         ).delete()
 
         if deleted_count == 0:
-            raise ValidationError("File not found in this collection.")  
+            raise DRFValidationError("File not found in this collection.")  
     
 class FileShareService:
     """
@@ -1610,9 +1857,9 @@ class DependencyService:
     def add_dependency(source: ProjectNode, target: ProjectNode, dependency_type: str, user) -> NodeDependency:
 
         if DependencyService._has_cycle(source.id, target.id):
-            raise ValidationError("Adding this dependency would create a circular reference.")
+            raise DRFValidationError("Adding this dependency would create a circular reference.")
         if source.status==ProjectNode.Status.INACTIVE or source.status==ProjectNode.Status.BLOCKED:
-            raise ValidationError("Cannot add dependency from an inactive node.")
+            raise DRFValidationError("Cannot add dependency from an inactive node.")
  
         # Ensure only one outgoing dependency from source (cascading deactivation)
         old_deps = NodeDependency.objects.filter(source_node=source)
