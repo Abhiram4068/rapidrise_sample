@@ -82,6 +82,8 @@ urlpatterns=[
     path("threads/", views.ThreadListCreateView.as_view(), name="thread-list-create"),
     path("threads/<int:pk>/", views.ThreadDetailView.as_view(), name="thread-detail"),
     path("threads/<int:pk>/graph/", views.ThreadGraphView.as_view(), name="thread-graph"),
+    path("threads/<int:thread_id>/stages/", views.ThreadStageListCreateView.as_view(), name="thread-stage-list-create"),
+    path("stages/<int:pk>/", views.ThreadStageDetailView.as_view(), name="thread-stage-detail"),
  
     # Nodes (scoped to a thread)
     path("threads/<int:thread_id>/nodes/", views.NodeListCreateView.as_view(), name="node-list-create"),

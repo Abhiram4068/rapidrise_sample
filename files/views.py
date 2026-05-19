@@ -1300,7 +1300,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import NodeDependency, NodeFile, ProjectNode, ProjectThread, NodeActivity
+from .models import NodeDependency, NodeFile, ProjectNode, ProjectThread, NodeActivity, ProjectStage
 from .serializers import (
     DependencySerializer,
     GraphEdgeSerializer,
@@ -1313,6 +1313,7 @@ from .serializers import (
     NodeUpdateSerializer,
     ThreadCreateSerializer,
     ThreadSerializer,
+    ProjectStageSerializer,
 )
 from .services import DependencyService, FileService, NodeService, ThreadService
 
@@ -1352,10 +1353,10 @@ class ThreadDetailView(APIView):
         thread = self._get_thread(pk, request.user)
         if not thread:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
-        serializer = ThreadCreateSerializer(thread, data=request.data, partial=True)
+        serializer = ThreadSerializer(thread, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
-        return Response(ThreadSerializer(thread).data)
+        return Response(serializer.data)
 
     def delete(self, request, pk):
         thread = self._get_thread(pk, request.user)
@@ -1379,7 +1380,60 @@ class ThreadGraphView(APIView):
         return Response({
             "nodes": GraphNodeSerializer(graph["nodes"], many=True).data,
             "edges": GraphEdgeSerializer(graph["edges"], many=True).data,
+            "stages": ProjectStageSerializer(graph["stages"], many=True).data,
         })
+
+
+class ThreadStageListCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, thread_id):
+        try:
+            ProjectThread.objects.get(pk=thread_id, created_by=request.user)
+        except ProjectThread.DoesNotExist:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+            
+        stages = ProjectStage.objects.filter(thread_id=thread_id)
+        return Response(ProjectStageSerializer(stages, many=True).data)
+
+    def post(self, request, thread_id):
+        try:
+            thread = ProjectThread.objects.get(pk=thread_id, created_by=request.user)
+        except ProjectThread.DoesNotExist:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+            
+        serializer = ProjectStageSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        stage = serializer.save(thread=thread)
+        return Response(ProjectStageSerializer(stage).data, status=status.HTTP_201_CREATED)
+
+
+class ThreadStageDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def _get_stage(self, pk, user):
+        try:
+            return ProjectStage.objects.get(pk=pk, thread__created_by=user)
+        except ProjectStage.DoesNotExist:
+            return None
+
+    def put(self, request, pk):
+        stage = self._get_stage(pk, request.user)
+        if not stage:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        
+        serializer = ProjectStageSerializer(stage, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+    def delete(self, request, pk):
+        stage = self._get_stage(pk, request.user)
+        if not stage:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+            
+        stage.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 # ─── Node ─────────────────────────────────────────────────────────────────────
@@ -1502,15 +1556,22 @@ class DependencyListCreateView(APIView):
 
         target_id = serializer.validated_data["target_node"].id
         try:
-            target = ProjectNode.objects.get(pk=target_id, is_deleted=False)
+            target = ProjectNode.objects.get(pk=target_id, thread=source.thread, is_deleted=False)
         except ProjectNode.DoesNotExist:
-            return Response({"detail": "Target node not found."}, status=status.HTTP_404_NOT_FOUND)
+            return Response({"detail": "Target node not found or belongs to a different thread."}, status=status.HTTP_404_NOT_FOUND)
 
-        dep = DependencyService.add_dependency(
-            source, target,
-            serializer.validated_data.get("dependency_type", NodeDependency.DependencyType.DEPENDS_ON),
-            request.user,
-        )
+        try:
+            dep = DependencyService.add_dependency(
+                source, target,
+                serializer.validated_data.get("dependency_type", NodeDependency.DependencyType.DEPENDS_ON),
+                request.user,
+            )
+        except DRFValidationError as e:
+            msg = e.detail[0] if isinstance(e.detail, (list, dict)) else str(e.detail)
+            return Response({"detail": msg}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+             return Response({"detail": f"Dependency error: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
+
         return Response(DependencySerializer(dep).data, status=status.HTTP_201_CREATED)
 
 
@@ -1527,11 +1588,13 @@ class DependencyDetailView(APIView):
         if not dependency_type:
             return Response({"detail": "dependency_type is required."}, status=status.HTTP_400_BAD_REQUEST)
             
-        from django.core.exceptions import ValidationError
         try:
             dep = DependencyService.update_dependency(dep, dependency_type, request.user)
-        except ValidationError as e:
-            return Response({"detail": e.message}, status=status.HTTP_400_BAD_REQUEST)
+        except DRFValidationError as e:
+            msg = e.detail[0] if isinstance(e.detail, (list, dict)) else str(e.detail)
+            return Response({"detail": msg}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
             
         return Response(DependencySerializer(dep).data)
 
