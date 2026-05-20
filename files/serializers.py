@@ -346,6 +346,16 @@ class FileShareCreateSerializer(serializers.Serializer):
     title=serializers.CharField(max_length=500, required=False, allow_blank=True)
     message=serializers.CharField(max_length=500, required=False, allow_blank=True)
     schedule_at = serializers.DateTimeField(required=False)
+    permission = serializers.ChoiceField(
+        choices=['view_only', 'view_download', 'one_time_download', 'full_access'],
+        default='view_only'
+    )
+    download_limit = serializers.IntegerField(
+        min_value=1,
+        required=False,
+        allow_null=True
+    )
+    view_limit = serializers.IntegerField(min_value=1, required=False, allow_null=True)  
 
     def validate_file_id(self, value):
         request=self.context.get('request')
@@ -366,6 +376,23 @@ class FileShareCreateSerializer(serializers.Serializer):
         if value <= timezone.now():
             raise serializers.ValidationError("Schedule time must be in the future.")
         return value
+    def validate(self, data):
+        permission = data.get('permission', 'view_only')
+
+        # one_time_download always forces download_limit to 1
+        if permission == 'one_time_download':
+            data['download_limit'] = 1
+            data['view_limit'] = None
+
+        # download_limit only applies to view_download
+        if permission not in ('view_download',):
+            data['download_limit'] = None
+
+        # view_limit only applies to view_only and view_download
+        if permission not in ('view_only', 'view_download'):
+            data['view_limit'] = None
+
+        return data
 
 class FileShareListSerializer(serializers.ModelSerializer):
     file_name=serializers.CharField(source='file.original_name', read_only=True)
@@ -380,13 +407,26 @@ class FileShareListSerializer(serializers.ModelSerializer):
     status = serializers.SerializerMethodField()
     content_type = serializers.CharField(source='file.content_type', read_only=True)
     file_id = serializers.UUIDField(source='file.id', read_only=True)
+
+    permission = serializers.CharField(read_only=True)
+    download_limit = serializers.IntegerField(read_only=True, allow_null=True)
+    
+    download_count = serializers.IntegerField(read_only=True)
+    downloads_remaining = serializers.SerializerMethodField() 
+
+    view_limit = serializers.IntegerField(read_only=True, allow_null=True)      
+    view_count = serializers.IntegerField(read_only=True)                        
+    views_remaining = serializers.SerializerMethodField() 
     class Meta:
         model = FileShareLink
         fields = [
             'id', 'file_name', 'file_size', 'owner_email', 
             'recipient_email', 'created_at', 'expiration_datetime',
             'accessed_at', 'is_active', 'share_url', 'status', 'content_type', 'revoked_at',
-            'file_id'
+            'file_id',
+            'permission', 'download_limit', 'download_count', 'downloads_remaining', 
+
+            'view_limit', 'view_count', 'views_remaining',  
         ]
     def get_is_active(self, obj):
         return obj.is_active
@@ -414,6 +454,18 @@ class FileShareListSerializer(serializers.ModelSerializer):
 
     def get_file_id(self, obj):
         return obj.file.id
+    def get_downloads_remaining(self, obj):
+        if obj.permission == 'one_time_download':
+            return 0 if obj.download_count >= 1 else 1
+        if obj.permission == 'view_download' and obj.download_limit is not None:
+            remaining = obj.download_limit - obj.download_count
+            return max(remaining, 0)
+        return None  
+
+    def get_views_remaining(self, obj):
+        if obj.permission in ('view_only', 'view_download') and obj.view_limit is not None:
+            return max(obj.view_limit - obj.view_count, 0)
+        return None 
     
 
 class ScheduledMailSerializer(serializers.ModelSerializer):

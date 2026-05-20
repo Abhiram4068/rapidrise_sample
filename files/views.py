@@ -22,7 +22,7 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.exceptions import NotFound, ValidationError as DRFValidationError
 from files.authentication import CookieJWTAuthentication
 from files.exceptions import StorageLimitExceeded
-
+from django.db.models import F
 
 import logging
 logger = logging.getLogger(__name__)
@@ -771,7 +771,10 @@ class FileShareCreateListUpdateView(APIView):
                                                               expiration_hours=serializer.validated_data['expiration_datetime'],
                                                               title=serializer.validated_data.get('title', ''),
                                                               message=serializer.validated_data.get('message', ''),
-                                                              schedule_at=serializer.validated_data.get('schedule_at')  
+                                                              schedule_at=serializer.validated_data.get('schedule_at'),
+                                                              permission=serializer.validated_data.get('permission', 'view_only'),
+                                                              download_limit=serializer.validated_data.get('download_limit')  ,
+                                                              view_limit=serializer.validated_data.get('view_limit')
                                                               )
                     shares.append(share)
                 response_serializer=FileShareSerializer(shares, many=True, context={'request': request})
@@ -800,7 +803,7 @@ class FileShareCreateListUpdateView(APIView):
         serializer=FileShareListSerializer(paginated_shares, many=True, context={'request': request})
         return Response({
             "current_page": page,
-            "total_pages": (total_mails_send + page_size - 1),
+            "total_pages": (total_mails_send + page_size - 1) ,
             "total_mails_send": total_mails_send,
             "user_data": UserProfileSerializer(request.user).data,
             "account_status": request.user.account_status,
@@ -949,39 +952,94 @@ class RevokeScheduledMailView(APIView):
 
 
 class PublicFileAccessView(APIView):
-    authentication_classes=[]
-    permission_classes=[]
+    authentication_classes = []
+    permission_classes = []
 
     def get(self, request, token):
-        serializer=PublicFileSerializer(data={'token':token})
+        serializer = PublicFileSerializer(data={'token': token})
         if not serializer.is_valid():
-            error_message=serializer.errors['token'][0]
-            status_code=410 if 'expired' in str(error_message).lower() else 404
-            return Response({'error':str(error_message)}, status=status_code)
-        
-        share=serializer.share
-        if share.accessed:
+            error_message = serializer.errors['token'][0]
+            status_code = 410 if 'expired' in str(error_message).lower() else 404
+            return Response({'error': str(error_message)}, status=status_code)
+
+        share = serializer.share
+
+        if not share.is_active:
+            return Response(
+                {'error': 'This link is no longer active.'},
+                status=status.HTTP_410_GONE
+            )
+
+        action = request.query_params.get('action')
+        if not action:
+            if share.permission == 'view_only':
+                action = 'view'
+            else:
+                action = 'download'
+
+        # ── VIEW action ──────────────────────────────────────────────────
+        if action == 'view':
+            if share.permission == 'one_time_download':
+                return Response(
+                    {'error': 'This link is download-only.'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            # check view limit
+            if share.view_limit is not None and share.view_count >= share.view_limit:
                 return Response(
                     {
-                        'error': 'File has already been accessed',
-                        'message': 'This shared link can only be accessed once for security reasons.'
+                        'error': 'View limit reached.',
+                        'message': 'The maximum number of views for this link has been reached.'
                     },
                     status=status.HTTP_403_FORBIDDEN
                 )
 
+            ViewFileShareService.mark_as_accessed(share)
+            share.view_count = F('view_count') + 1
+            share.save(update_fields=['view_count'])
+
+            file_obj, filename = ViewFileShareService.get_file_response(share)
+            return FileResponse(file_obj, as_attachment=False, filename=filename)
+
+        # ── DOWNLOAD action ──────────────────────────────────────────────
+        if share.permission == 'view_only':
+            return Response(
+                {'error': 'Download not allowed for this link.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        if share.permission == 'view_download' and share.download_limit is not None:
+            if share.download_count >= share.download_limit:
+                return Response(
+                    {
+                        'error': 'Download limit reached.',
+                        'message': 'The maximum number of downloads for this file has been reached.'
+                    },
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+        if share.permission == 'one_time_download' and share.accessed:
+            return Response(
+                {
+                    'error': 'File has already been downloaded.',
+                    'message': 'This link only allows a single download.'
+                },
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         ViewFileShareService.mark_as_accessed(share)
 
+        share.download_count = F('download_count') + 1
+        share.save(update_fields=['download_count'])
+
+        if share.permission == 'one_time_download':
+            share.is_active = False
+            share.save(update_fields=['is_active'])
+
         file_obj, filename = ViewFileShareService.get_file_response(share)
-
-        return FileResponse(
-                file_obj,
-                as_attachment=False,
-                filename=filename
-        )
-
-
-logger = logging.getLogger("collections")
-        
+        return FileResponse(file_obj, as_attachment=True, filename=filename)
+            
 class CollectionListCreateView(APIView):
     permission_classes = [IsAuthenticated]
 

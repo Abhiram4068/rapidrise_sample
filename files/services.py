@@ -940,7 +940,8 @@ class FileShareService:
     def generate_share_token():
         return secrets.token_urlsafe(32)
     @staticmethod
-    def create_share_token(file_id, owner, recipient_email, expiration_hours, title, message, schedule_at=None):
+    def create_share_token(file_id, owner, recipient_email, expiration_hours, title, message, schedule_at=None,
+        permission='view_only', download_limit=None, view_limit=None):
         """
         for creating a file token and returns a fileshare link
         """
@@ -956,7 +957,10 @@ class FileShareService:
             owner=owner,
             recipient_email=recipient_email.lower(),
             share_token=share_token,
-            expiration_datetime=expiration_datetime
+            expiration_datetime=expiration_datetime,
+            permission=permission,
+            download_limit=download_limit,
+            view_limit=view_limit
         )
 
         if schedule_at:

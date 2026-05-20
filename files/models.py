@@ -149,6 +149,20 @@ class FileShareLink(models.Model):
     accessed_at=models.DateTimeField(blank=True, null=True)
     is_active=models.BooleanField(default=True)
     revoked_at = models.DateTimeField(null=True, blank=True)
+    permission = models.CharField(
+        max_length=20,
+        choices=[
+            ('view_only', 'View Only'),
+            ('view_download', 'View + Download'),
+            ('one_time_download', 'One-time Download'),
+            ('full_access', 'Full Access'),
+        ],
+        default='view_only'
+    )
+    download_limit = models.PositiveIntegerField(null=True, blank=True)
+    download_count = models.PositiveIntegerField(default=0)
+    view_limit = models.PositiveIntegerField(null=True, blank=True)
+    view_count = models.PositiveIntegerField(default=0)
     def __str__(self):
         return f"{self.file} shared with {self.recipient_email}"
     class Meta:
