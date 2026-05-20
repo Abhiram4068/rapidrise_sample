@@ -618,6 +618,23 @@ class FileDeleteView(APIView):
             {'detail':'File restored successfuly!'},
             status=status.HTTP_200_OK
         )
+
+class BulkFileDeleteView(APIView):
+    """
+    View for bulk deleting multiple files.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        file_ids = request.data.get('file_ids', [])
+        if not file_ids:
+            return Response({"error": "No file IDs provided"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            count = FileService.bulk_delete_files(request.user, file_ids)
+            return Response({"message": f"{count} files moved to trash"}, status=status.HTTP_200_OK)
+        except ValueError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 class ClearTrash(APIView):
     """
     View for handling trash clear functionality
@@ -684,6 +701,23 @@ class FileUnarchiveView(APIView):
         return Response(
             { "message": "File restored successfully"},
             status=status.HTTP_200_OK)
+
+class BulkFileArchiveView(APIView):
+    """
+    View for bulk archiving multiple files.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        file_ids = request.data.get('file_ids', [])
+        if not file_ids:
+            return Response({"error": "No file IDs provided"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            count = FileService.bulk_archive_files(request.user, file_ids)
+            return Response({"message": f"{count} files archived successfully"}, status=status.HTTP_200_OK)
+        except ValueError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 class ArchiveDeleteFileView(APIView):
     """
@@ -1161,7 +1195,7 @@ class CollectionFileView(APIView):
                 file_id=file_id
             )
         except ValidationError as e:
-            return Response({"detail": e.message}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": e.detail}, status=status.HTTP_400_BAD_REQUEST)
         return Response(
             CollectionFileSerializer(collection_file).data,
             status=status.HTTP_201_CREATED,

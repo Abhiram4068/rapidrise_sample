@@ -2,7 +2,7 @@ from django.urls import path
 from files.views import (
     RegisterView, LoginView, TokenRefreshCookieView,DesignationListView, ChangePasswordView,LogoutView, ForgotPasswordView,ResetPasswordView,UserProfileView, FileUploadView, ChunkUploadView, ClearTrash, FileDownloadView, FileViewInlineView, FileListView, FileUpdateView, ArchiveFile, FileArchiveView, FileUnarchiveView,FileDetailView,FileDeleteView, FileShareCreateListUpdateView, PublicFileAccessView,
     CollectionListCreateView, CollectionDetailView, CollectionFileView, FileStarredList, CollectionStarredList, RecentView, FileShareScheduleCreateListView, FileShareScheduleCalendarView, RevokeScheduledMailView, ReportDownloadView, ArchiveDeleteFileView, StorageSummaryView, DashboardView, StorageManagementView, StoragePermanentDeleteView,
-    DeactivateAccountView, ReactivationRequestView, ReactivationResolveView
+    DeactivateAccountView, ReactivationRequestView, ReactivationResolveView, BulkFileDeleteView, BulkFileArchiveView
     )
 from . import views
 """
@@ -34,6 +34,7 @@ urlpatterns=[
     path('file-list/', FileListView.as_view(), name='file-list'),
     path('files/<uuid:pk>/update/', FileUpdateView.as_view(), name='file-update'),
     path('files/<uuid:pk>/', FileDetailView.as_view(), name='file-detail'),
+    path('files/bulk-delete/', BulkFileDeleteView.as_view(), name='bulk-file-delete'),
     path('files/<uuid:file_id>/delete/', FileDeleteView.as_view(), name='file-delete'),
     path('files/view-recently-deleted/',FileDeleteView.as_view(), name='view-recently-deleted'),
     path('files/clear-trash/<uuid:file_id>/',ClearTrash.as_view(), name='clear-trash'),
@@ -66,6 +67,7 @@ urlpatterns=[
 
 
     #files archive 
+    path('files/bulk-archive/', BulkFileArchiveView.as_view(), name='bulk-file-archive'),
     path('files/<uuid:file_id>/archive/', FileArchiveView.as_view(), name='file-archive'),
     path('files/<uuid:file_id>/unarchive/', FileUnarchiveView.as_view(), name='file-unarchive'),
     path('files/archives/', ArchiveFile.as_view(), name='archives'),

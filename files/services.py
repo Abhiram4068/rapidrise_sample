@@ -656,6 +656,20 @@ class FileService:
         file_obj.save(update_fields=['is_archive', 'archived_at'])
 
     @staticmethod
+    def bulk_delete_files(user, file_ids):
+        if not file_ids or not isinstance(file_ids, list):
+            raise ValueError("Provide a valid list of file_ids.")
+        files = File.objects.filter(id__in=file_ids, user=user, is_deleted=False)
+        return files.update(is_deleted=True, deleted_at=timezone.now())
+
+    @staticmethod
+    def bulk_archive_files(user, file_ids):
+        if not file_ids or not isinstance(file_ids, list):
+            raise ValueError("Provide a valid list of file_ids.")
+        files = File.objects.filter(id__in=file_ids, user=user, is_deleted=False, is_archive=False)
+        return files.update(is_archive=True, archived_at=timezone.now())
+
+    @staticmethod
     def user_unarchive_file(user, file_id):
         file_obj=get_object_or_404(
             File, user=user, id=file_id, is_deleted=False, is_archive=True
@@ -666,7 +680,7 @@ class FileService:
         
     @staticmethod
     def get_user_starred_files(user):
-        starred_files=File.objects.filter(user=user, is_starred=True, is_deleted=False)
+        starred_files=File.objects.filter(user=user, is_starred=True, is_deleted=False,  is_archive=False)
         return starred_files.order_by('-created_at')
 
     @staticmethod

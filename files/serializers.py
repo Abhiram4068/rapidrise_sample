@@ -216,6 +216,7 @@ class FilesListSerializer(serializers.ModelSerializer):
     file_url = serializers.SerializerMethodField()
     status = serializers.SerializerMethodField()
     shares = serializers.SerializerMethodField()
+    is_starred=serializers.BooleanField(required=False)
     class Meta:
         model=File
         fields=[
@@ -263,6 +264,9 @@ class FilesListSerializer(serializers.ModelSerializer):
                 expiration_datetime__lt=timezone.now()
             )
             return FileShareLinkSerializer(active_shares, many=True).data
+
+    def get_is_starred(self, obj):
+        return obj.is_starred
 
 
 class FileUpdateSerializer(serializers.ModelSerializer):
@@ -317,7 +321,8 @@ class CollectionFileSerializer(serializers.ModelSerializer):
     display_name=serializers.CharField(source="file.display_name", read_only=True)
     added_at = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", read_only=True)
     file_url=serializers.SerializerMethodField()
-
+    is_starred=serializers.SerializerMethodField()
+    
     class Meta:
         model = CollectionFile
         fields = [
@@ -328,7 +333,8 @@ class CollectionFileSerializer(serializers.ModelSerializer):
             "display_name",
             "added_at",
             "file",
-            "file_url"
+            "file_url",
+            "is_starred"
         ]
         read_only_fields = ["id", "added_at", "file"]
     def get_file_url(self, obj):
@@ -336,6 +342,8 @@ class CollectionFileSerializer(serializers.ModelSerializer):
         if obj.file and request:
             return request.build_absolute_uri(obj.file.file.url)
         return None
+    def get_is_starred(self, obj):
+        return obj.file.is_starred if obj.file else False
 
 class FileShareCreateSerializer(serializers.Serializer):
     recipient_emails=serializers.ListField(
