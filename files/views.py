@@ -992,24 +992,32 @@ class PublicFileAccessView(APIView):
     def get(self, request, token):
         serializer = PublicFileSerializer(data={'token': token})
         if not serializer.is_valid():
-            error_message = serializer.errors['token'][0]
-            status_code = 410 if 'expired' in str(error_message).lower() else 404
+            error_message = next(iter(serializer.errors.values()))[0]
+            status_code = status.HTTP_404_NOT_FOUND
+            if 'expired' in str(error_message).lower():
+                status_code = status.HTTP_410_GONE
+            elif 'revoked' in str(error_message).lower() or 'used' in str(error_message).lower():
+                status_code = status.HTTP_403_FORBIDDEN
             return Response({'error': str(error_message)}, status=status_code)
 
         share = serializer.share
-
-        if not share.is_active:
-            return Response(
-                {'error': 'This link is no longer active.'},
-                status=status.HTTP_410_GONE
-            )
-
         action = request.query_params.get('action')
+
         if not action:
-            if share.permission == 'view_only':
-                action = 'view'
-            else:
-                action = 'download'
+            return Response({
+                'file_name': share.file.original_name,
+                'file_size': share.file.file_size,
+                'content_type': share.file.content_type,
+                'sender_name': f"{share.owner.first_name} {share.owner.last_name}",
+                'sender_email': share.owner.email,
+                'permission': share.permission,
+                'view_limit': share.view_limit,
+                'view_count': share.view_count,
+                'download_limit': share.download_limit,
+                'download_count': share.download_count,
+                'expiration_datetime': share.expiration_datetime,
+                'accessed': share.accessed
+            })
 
         # ── VIEW action ──────────────────────────────────────────────────
         if action == 'view':
@@ -1073,6 +1081,39 @@ class PublicFileAccessView(APIView):
 
         file_obj, filename = ViewFileShareService.get_file_response(share)
         return FileResponse(file_obj, as_attachment=True, filename=filename)
+from django.utils import timezone
+
+class PublicFileVerifyView(APIView):
+    authentication_classes = []
+    permission_classes = []
+
+    def get(self, request, token):
+        serializer = PublicFileSerializer(data={'token': token})
+        if not serializer.is_valid():
+            error_message = next(iter(serializer.errors.values()))[0]
+            
+            status_code = status.HTTP_404_NOT_FOUND
+            if 'expired' in str(error_message).lower():
+                status_code = status.HTTP_410_GONE
+            elif 'revoked' in str(error_message).lower() or 'used' in str(error_message).lower():
+                status_code = status.HTTP_403_FORBIDDEN
+            
+            return Response({'error': str(error_message)}, status=status_code)
+
+        share = serializer.share
+        return Response({
+            'file_name': share.file.original_name,
+            'file_size': share.file.file_size,
+            'content_type': share.file.content_type,
+            'sender': share.owner.get_full_name() or share.owner.email,
+            'expiration': share.expiration_datetime,
+            'permission': share.permission,
+            'accessed': share.accessed,
+            'view_limit': share.view_limit,
+            'view_count': share.view_count,
+            'download_limit': share.download_limit,
+            'download_count': share.download_count,
+        })
             
 class CollectionListCreateView(APIView):
     permission_classes = [IsAuthenticated]

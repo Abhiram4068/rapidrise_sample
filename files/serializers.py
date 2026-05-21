@@ -544,21 +544,30 @@ class FileShareSerializer(serializers.ModelSerializer):
     
 
 class PublicFileSerializer(serializers.Serializer):
-    token=serializers.CharField()
+    token = serializers.CharField()
 
     def validate_token(self, value):
-        """
-        validate whether the share object exists and is active
-        """
         try:
-            share=FileShareLink.objects.select_related('file').get(
-                share_token=value,
-                is_active=True
+            share = FileShareLink.objects.select_related('file', 'owner').get(
+                share_token=value
             )
         except FileShareLink.DoesNotExist:
-            raise serializers.ValidationError("Invalid or the link have expired")
-        if timezone.now() > share.expiration_datetime:
-            raise serializers.ValidationError("Share link have expired")
+            raise serializers.ValidationError("This link is invalid or does not exist.")
+
+        # Priority 1: Check if expired (even if inactive/revoked, expiration is often the primary reason)
+        if share.expiration_datetime and share.expiration_datetime < timezone.now():
+            raise serializers.ValidationError("This access link has expired.")
+
+        # Priority 2: Check if manually revoked
+        if share.revoked_at:
+            raise serializers.ValidationError("This access link has been revoked.")
+
+        # Priority 3: Check general activity (e.g. one-time used)
+        if not share.is_active:
+            if share.permission == 'one_time_download' and share.accessed:
+                raise serializers.ValidationError("This one-time link has already been used.")
+            raise serializers.ValidationError("This access link is currently inactive.")
+
         self.share = share
         return value
 
