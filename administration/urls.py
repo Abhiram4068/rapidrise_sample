@@ -1,6 +1,7 @@
 from django.urls import path
 from .views import (AdminDashboardStatsView, AdminReactivationRequestListView, AdminResolveReactivationView, AdminUserListView, AdminUserDetailsView, AdminBlockUserView,
-AdminViewNewUserRequests, AdminResolveNewUserRequest, AdminBlockedUserListView, AdminUnblockUserView, AdminDeletedUserListView, AdminDeleteUserView, AdminRestoreUserView)
+AdminViewNewUserRequests, AdminResolveNewUserRequest, AdminBlockedUserListView, AdminUnblockUserView, AdminDeletedUserListView, AdminDeleteUserView, AdminRestoreUserView,
+AdminDesignationChangeRequestListView, AdminResolveDesignationChangeRequestView, AdminDesignationListCreateDeleteView, AdminDesignationDestroyView)
 
 urlpatterns = [
     path('stats/', AdminDashboardStatsView.as_view(), name='admin-stats'),
@@ -16,5 +17,8 @@ urlpatterns = [
     path('new-users/<int:pk>/resolve/', AdminResolveNewUserRequest.as_view(), name='admin-resolve-new-user'),
     path('blocked-users/', AdminBlockedUserListView.as_view(), name='admin-blocked-users'),
     path('deleted-users/', AdminDeletedUserListView.as_view(), name='admin-deleted-users'),
-
+    path('designations/', AdminDesignationListCreateDeleteView.as_view(), name='admin-designation-list-create-delete'),
+    path('designations/<str:pk>/', AdminDesignationDestroyView.as_view(), name='admin-designation-destroy'),
+    path('designation-requests/', AdminDesignationChangeRequestListView.as_view(), name='admin-designation-requests'),
+    path('designation-requests/<int:pk>/resolve/', AdminResolveDesignationChangeRequestView.as_view(), name='admin-resolve-designation-request'),
 ]

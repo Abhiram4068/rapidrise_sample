@@ -7,8 +7,8 @@ from django.contrib.auth import get_user_model
 from files.models import File, ReactivationRequest
 from files.serializers import ReactivationRequestSerializer, UserProfileSerializer
 from django.db.models import Count, Sum
-from .serializers import AdminUserListSerializer
-from .services import AdminUserService
+from .serializers import AdminUserListSerializer, DesignationChangeRequestSerializer, DesignationSerializer
+from .services import AdminUserService, DesignationService
 from rest_framework.pagination import PageNumberPagination
 from django.db import models
 from django.db.models import Q
@@ -240,6 +240,74 @@ class AdminRestoreUserView(APIView):
         try:
             AdminUserService.restore_user(pk)
             return Response({"message": "User restored successfully"}, status=status.HTTP_200_OK)
+        except ValueError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+class AdminDesignationListCreateDeleteView(APIView):
+    permission_classes = [IsAdminUser]
+
+    def get(self, request):
+        designations = DesignationService.get_all_designations()
+        serializer = DesignationSerializer(designations, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def post(self, request):
+        serializer = DesignationSerializer(data=request.data)
+        if serializer.is_valid():
+            designation = DesignationService.create_designation(serializer.validated_data)
+            return Response(
+                DesignationSerializer(designation).data,
+                status=status.HTTP_201_CREATED
+            )
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+class AdminDesignationDestroyView(APIView):
+    permission_classes = [IsAdminUser]
+
+    def delete(self, request, pk):
+        result = DesignationService.delete_designation(pk)
+        return Response(result, status=status.HTTP_200_OK)
+
+class AdminDesignationChangeRequestListView(APIView):
+    permission_classes = [IsAdminUser]
+
+    def get(self, request):
+        queryset = AdminUserService.get_designation_change_requests()
+        
+        search = request.query_params.get('search', '').strip()
+        if search:
+            queryset = queryset.filter(
+                models.Q(user__email__icontains=search) |
+                models.Q(user__first_name__icontains=search) |
+                models.Q(user__last_name__icontains=search) |
+                models.Q(requested_designation__icontains=search)
+            )
+
+        paginator = StandardResultsPagination()
+        page = paginator.paginate_queryset(queryset, request, view=self)
+        
+        if page is not None:
+            serializer = DesignationChangeRequestSerializer(page, many=True)
+            return paginator.get_paginated_response(serializer.data)
+
+        serializer = DesignationChangeRequestSerializer(queryset, many=True)
+        return Response(serializer.data)
+
+class AdminResolveDesignationChangeRequestView(APIView):
+    permission_classes = [IsAdminUser]
+
+    def post(self, request, pk):
+        action = request.data.get('action') # 'approve' or 'reject'
+        
+        if not action:
+            return Response({"error": "action is required."}, status=status.HTTP_400_BAD_REQUEST)
+            
+        try:
+            AdminUserService.resolve_designation_change_request(pk, action, request.user)
+            message = f"Designation change request {action}d successfully."
+            return Response({"message": message}, status=status.HTTP_200_OK)
         except ValueError as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:

@@ -275,7 +275,53 @@ class CollectionFile(models.Model):
         return f"{self.file.original_name} → {self.collection.name}"
 
 
+class DesignationChangeRequest(models.Model):
 
+    class StatusChoices(models.TextChoices):
+        PENDING  = "pending",  "Pending"
+        APPROVED = "approved", "Approved"
+        REJECTED = "rejected", "Rejected"
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="designation_change_requests"
+    )
+
+    current_designation = models.CharField(
+        max_length=20,
+        choices=User.DesignationChoices.choices
+    )
+    requested_designation = models.CharField(
+        max_length=20,
+        choices=User.DesignationChoices.choices
+    )
+
+    status = models.CharField(
+        max_length=10,
+        choices=StatusChoices.choices,
+        default=StatusChoices.PENDING
+    )
+
+    admin_note = models.TextField(blank=True, default="")
+
+    resolved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="resolved_designation_requests"
+    )
+
+    created_at  = models.DateTimeField(auto_now_add=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "designation_change_requests"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.user.email}: {self.current_designation} → {self.requested_designation} [{self.status}]"
 
 
 #threads

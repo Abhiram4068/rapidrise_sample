@@ -2,7 +2,8 @@ from django.urls import path
 from files.views import (
     RegisterView, LoginView, TokenRefreshCookieView,DesignationListView, ChangePasswordView,LogoutView, ForgotPasswordView,ResetPasswordView,UserProfileView, FileUploadView, ChunkUploadView, ClearTrash, FileDownloadView, FileViewInlineView, FileListView, FileUpdateView, ArchiveFile, FileArchiveView, FileUnarchiveView,FileDetailView,FileDeleteView, FileShareCreateListUpdateView, PublicFileAccessView,
     CollectionListCreateView, CollectionDetailView, CollectionFileView, FileStarredList, CollectionStarredList, RecentView, FileShareScheduleCreateListView, FileShareScheduleCalendarView, RevokeScheduledMailView, ReportDownloadView, ArchiveDeleteFileView, StorageSummaryView, DashboardView, StorageManagementView, StoragePermanentDeleteView,
-    DeactivateAccountView, ReactivationRequestView, ReactivationResolveView, BulkFileDeleteView, BulkFileArchiveView
+    DeactivateAccountView, ReactivationRequestView, ReactivationResolveView, BulkFileDeleteView, BulkFileArchiveView, BulkRestoreFileView, EmptyTrashView, BulkUnarchiveFileView,
+    DesignationChangeRequestView, DesignationChangeRequestResolveView
     )
 from . import views
 """
@@ -24,6 +25,9 @@ urlpatterns=[
     path('auth/deactivate/', DeactivateAccountView.as_view(), name='deactivate_account'),
     path('auth/reactivation-request/', ReactivationRequestView.as_view(), name='reactivation_request'),
     path('auth/reactivation-request/<str:pk>/resolve/', ReactivationResolveView.as_view(), name='reactivation_resolve'),
+    path("designation-change/", DesignationChangeRequestView.as_view(), name="designation-change"),
+    path("designation-change/admin/", DesignationChangeRequestResolveView.as_view(), name="designation-change-admin"),
+    path("designation-change/admin/<int:pk>/resolve/", DesignationChangeRequestResolveView.as_view(), name="designation-change-resolve"),
     #password change
     path("auth/change-password/",ChangePasswordView.as_view(), name="change-password" ),
     #file download urls
@@ -43,7 +47,10 @@ urlpatterns=[
     path('files/starred/', FileStarredList.as_view(), name='starred-files'),
     path('collections/starred/', CollectionStarredList.as_view(), name='starred-files'),
     #--------------------------------------------------------------------------------------------
+    path('files/bulk-unarchive/', BulkUnarchiveFileView.as_view(), name='bulk-unarchive'),
     path('files/<uuid:file_id>/restore/recently-deleted/',FileDeleteView.as_view(), name='restore-recently-deleted'),
+    path('files/bulk-restore-trash/', BulkRestoreFileView.as_view(), name='bulk-restore-trash'),
+    path('files/empty-trash/', EmptyTrashView.as_view(), name='empty-trash'),
     #collection urls
     path("collections/", CollectionListCreateView.as_view()),
     path("collections/<uuid:collection_id>/", CollectionDetailView.as_view()),

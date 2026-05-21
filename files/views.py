@@ -12,9 +12,9 @@ from django.http import FileResponse
 from django.core.exceptions import ValidationError, PermissionDenied
 from files.serializers import (
     RegisterSerializer, LoginSerializer, UserProfileSerializer,ChangePasswordSerialzier, DeactivateAccountSerializer, FileUploadSerialzier, FilesListSerializer, FileUpdateSerializer ,FileShareSerializer, FileShareCreateSerializer, PublicFileSerializer,CollectionSerializer, CollectionFileSerializer
-    ,ScheduledMailSerializer, FileShareListSerializer, ReportQuerySerializer, ResetPasswordSerializer, ForgotPasswordSerializer, ReactivationRequestSerializer
+    ,ScheduledMailSerializer, FileShareListSerializer, ReportQuerySerializer, DesignationSerializer, ResetPasswordSerializer, ForgotPasswordSerializer, ReactivationRequestSerializer, DesignationChangeRequestListSerializer, DesignationChangeRequestCreateSerializer, DesignationChangeRequestAdminSerializer
     )
-from files.models import ReactivationRequest
+from files.models import ReactivationRequest, DesignationChangeRequest
 from files.services import (
     create_user, get_designation, authenticate_and_generate_token, AuthenticationError ,AuthService, UserProfileService, FileService, FileShareService, ViewFileShareService, CollectionService, ReportService, AccountService
     )
@@ -22,7 +22,7 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.exceptions import NotFound, ValidationError as DRFValidationError
 from files.authentication import CookieJWTAuthentication
 from files.exceptions import StorageLimitExceeded
-from django.db.models import F
+from django.db.models import F, Sum, Q
 
 import logging
 logger = logging.getLogger(__name__)
@@ -89,14 +89,15 @@ class RegisterView(APIView):
             {'message':'User Registered successfully!!!'},
             status=status.HTTP_201_CREATED
         )
+
 class DesignationListView(APIView):
-    authentication_classes = []
     permission_classes = [AllowAny]
 
     def get(self, request):
-        designation = get_designation()
-        return Response(designation)
-
+        from .services import DesignationListService
+        designations = DesignationListService.get_active_designations()
+        serializer = DesignationSerializer(designations, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 class LoginView(APIView):
     authentication_classes=[]
     permission_classes=[AllowAny]
@@ -237,6 +238,7 @@ class ChangePasswordView(APIView):
     permission_classes=[IsAuthenticated]
     serializer_class=ChangePasswordSerialzier
     def post(self, request):
+
         serializer=self.serializer_class(
             data = request.data,
             context = {'request':request}
@@ -257,6 +259,7 @@ class DeactivateAccountView(APIView):
     serializer_class = DeactivateAccountSerializer
 
     def post(self, request):
+        print(request.data)
         serializer = self.serializer_class(
             data=request.data,
             context={'request': request}
@@ -347,6 +350,71 @@ class ReactivationResolveView(APIView):
             return Response({"message": "Reactivation request rejected. Status remains deactivated."})
         
         return Response({"error": "Invalid action"}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class DesignationChangeRequestView(APIView):
+    """
+    GET  /api/designation-change/   — list the authenticated user's own requests
+    POST /api/designation-change/   — submit a new designation change request
+    """
+    permission_classes = [IsAuthenticated]
+ 
+    def get(self, request):
+        requests = UserProfileService.get_user_designation_requests(user=request.user)
+        serializer = DesignationChangeRequestListSerializer(requests, many=True)
+        return Response(serializer.data)
+ 
+    def post(self, request):
+        serializer = DesignationChangeRequestCreateSerializer(
+            data=request.data,
+            context={"request": request}
+        )
+        serializer.is_valid(raise_exception=True)
+ 
+        try:
+            request_obj = UserProfileService.create_designation_request(
+                user=request.user,
+                requested_designation=serializer.validated_data["requested_designation"],
+            )
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+ 
+        out = DesignationChangeRequestListSerializer(request_obj)
+        return Response(out.data, status=status.HTTP_201_CREATED)
+
+
+
+ 
+class DesignationChangeRequestResolveView(APIView):
+    """
+    GET   /api/designation-change/admin/               — list all requests (admin only)
+    PATCH /api/designation-change/admin/<pk>/resolve/  — approve or reject (admin only)
+ 
+    PATCH body: { "status": "approved" | "rejected", "admin_note": "optional" }
+    """
+    permission_classes = [IsAdminUser]
+ 
+    def get(self, request):
+        status_filter = request.query_params.get("status")
+        requests = UserProfileService.get_all_designation_requests(status_filter=status_filter)
+        serializer = DesignationChangeRequestAdminSerializer(requests, many=True)
+        return Response(serializer.data)
+ 
+    def patch(self, request, pk):
+        try:
+            request_obj = UserProfileService.resolve_designation_request(
+                pk=pk,
+                new_status=request.data.get("status"),
+                admin_note=request.data.get("admin_note", ""),
+                resolved_by=request.user,
+            )
+        except DesignationChangeRequest.DoesNotExist:
+            return Response({"detail": "Request not found."}, status=status.HTTP_404_NOT_FOUND)
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+ 
+        serializer = DesignationChangeRequestAdminSerializer(request_obj)
+        return Response(serializer.data)
 
 import time
 from rest_framework.exceptions import ValidationError
@@ -593,18 +661,23 @@ class FileDeleteView(APIView):
                 Q(description__icontains=search)
             )
 
+        total_size = deleted_files.aggregate(total_size=Sum('file_size'))['total_size'] or 0
+
         paginator = self.pagination_class()
         try:
             page_qs = paginator.paginate_queryset(deleted_files, request, view=self)
             serializer = self.serializer_class(page_qs, many=True)
-            return paginator.get_paginated_response(serializer.data)
+            response = paginator.get_paginated_response(serializer.data)
+            response.data['total_size'] = total_size
+            return response
         except NotFound:
             return Response(
                 {
                     "count": deleted_files.count(),
                     "next": None,
                     "previous": None,
-                    "results": []
+                    "results": [],
+                    "total_size": total_size
                 },
                 status=status.HTTP_200_OK
             )
@@ -648,7 +721,53 @@ class ClearTrash(APIView):
         return Response(
             status=status.HTTP_204_NO_CONTENT
         )
-    
+
+class BulkRestoreFileView(APIView):
+    """
+    View for bulk restoring multiple files from trash.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        file_ids = request.data.get('file_ids', [])
+        if not file_ids:
+            return Response({"error": "No file IDs provided"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            count = FileService.bulk_restore_deleted_files(request.user, file_ids)
+            return Response({"message": f"{count} files restored from trash"}, status=status.HTTP_200_OK)
+        except ValueError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+class EmptyTrashView(APIView):
+    """
+    View for permanently clearing all files in trash for the authenticated user.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request):
+        try:
+            count = FileService.empty_user_trash(request.user)
+            return Response({"message": f"Trash emptied successfully. {count} items removed."}, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+class BulkUnarchiveFileView(APIView):
+    """
+    View for bulk unarchiving multiple files.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        file_ids = request.data.get('file_ids', [])
+        if not file_ids:
+            return Response({"error": "No file IDs provided"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            count = FileService.bulk_unarchive_files(request.user, file_ids)
+            return Response({"message": f"{count} files restored from archive"}, status=status.HTTP_200_OK)
+        except ValueError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
 from django.db.models import Q
 class ArchiveFile(APIView):
     """
@@ -663,12 +782,23 @@ class ArchiveFile(APIView):
             user=request.user,
             search=search
         )
+        total_size = archived_files.aggregate(total_size=Sum('file_size'))['total_size'] or 0
+
         if archived_files.exists():
             paginator = self.pagination_class()
             page_qs = paginator.paginate_queryset(archived_files, request, view=self)
             serializer=self.serializer_class(page_qs, many=True)
-            return paginator.get_paginated_response(serializer.data)
-        return Response({"message":"No archived files found!"}, status=status.HTTP_200_OK)
+            response = paginator.get_paginated_response(serializer.data)
+            response.data['total_size'] = total_size
+            return response
+        return Response({
+            "count": 0,
+            "next": None,
+            "previous": None,
+            "results": [],
+            "total_size": total_size,
+            "message":"No archived files found!"
+        }, status=status.HTTP_200_OK)
 
 
 

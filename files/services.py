@@ -1,7 +1,7 @@
 from django.db.models import Q
 from django.contrib.auth import get_user_model
 from django.utils.text import slugify
-from .models import User, File, FileShareLink, Collection, CollectionFile, ScheduledMail, ReactivationRequest
+from .models import User, File, FileShareLink, Collection, CollectionFile, ScheduledMail, ReactivationRequest, DesignationChangeRequest
 from django.db.models import F
 from django.db import transaction, IntegrityError
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -38,9 +38,6 @@ from .models import NodeActivity, NodeDependency, NodeFile, ProjectNode, Project
 
 
 def create_user(validated_data):
-    email=validated_data.get('email')
-    if User.objects.filter(email=email).exists():
-        raise ValueError("Email already exists")
     try:
         with transaction.atomic():
             validated_data["account_status"] = User.AccountStatus.WAITING_FOR_APPROVAL
@@ -85,6 +82,14 @@ def get_designation():
         {"value": key, "label": label}
         for key, label in User.DesignationChoices.choices
     ]
+
+
+class DesignationListService:
+    @staticmethod
+    def get_active_designations():
+        from administration.models import Designation
+        return Designation.objects.all().order_by('name')
+
 
 class AuthService:
     @staticmethod
@@ -205,6 +210,7 @@ class AccountService:
 
 
 class UserProfileService:
+ 
     @staticmethod
     def get_profile(user: User):
         return (
@@ -213,20 +219,107 @@ class UserProfileService:
             .annotate(total_files=Count(
                 "files",
                 filter=Q(files__is_deleted=False)
-                ))  # related_name
+            ))
             .only("id", "email", "first_name", "last_name", "designation", "date_of_birth")
             .first()
         )
+ 
     @staticmethod
     def update_profile(user: User, data: dict) -> User:
-        updatable_fields = ["first_name", "last_name", "date_of_birth", "designation"]
-        
+        updatable_fields = ["first_name", "last_name", "date_of_birth"]
+ 
         for field in updatable_fields:
             if field in data:
                 setattr(user, field, data[field])
-        
+ 
         user.save(update_fields=updatable_fields)
         return user
+ 
+    # ── Designation Change Request ─────────────────────────────────────────
+ 
+    @staticmethod
+    def get_user_designation_requests(user: User):
+        """Return all designation change requests belonging to the given user."""
+        return DesignationChangeRequest.objects.filter(user=user)
+ 
+    @staticmethod
+    def create_designation_request(user: User, requested_designation: str) -> DesignationChangeRequest:
+        """
+        Submit a new designation change request.
+        Raises ValueError if:
+          - requested_designation is the same as the current one
+          - the user already has a PENDING request
+        """
+        if requested_designation == user.designation:
+            raise ValueError(
+                "Requested designation must be different from your current designation."
+            )
+ 
+        if DesignationChangeRequest.objects.filter(
+            user=user,
+            status=DesignationChangeRequest.StatusChoices.PENDING
+        ).exists():
+            raise ValueError(
+                "You already have a pending designation change request. "
+                "Please wait for it to be resolved before submitting a new one."
+            )
+ 
+        return DesignationChangeRequest.objects.create(
+            user=user,
+            current_designation=user.designation,
+            requested_designation=requested_designation,
+            status=DesignationChangeRequest.StatusChoices.PENDING,
+        )
+ 
+    @staticmethod
+    def get_all_designation_requests(status_filter: str = None):
+        """
+        Return all designation change requests (admin use).
+        Optionally filter by status string e.g. 'pending'.
+        """
+        qs = DesignationChangeRequest.objects.select_related("user").all()
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+        return qs
+ 
+    @staticmethod
+    def resolve_designation_request(
+        pk,
+        new_status: str,
+        admin_note: str,
+        resolved_by: User
+    ) -> DesignationChangeRequest:
+        """
+        Approve or reject a pending designation change request.
+        - On approval the user's designation is updated immediately.
+        Raises:
+          - DesignationChangeRequest.DoesNotExist if pk not found
+          - ValueError for invalid status or already-resolved request
+        """
+        valid_statuses = (
+            DesignationChangeRequest.StatusChoices.APPROVED,
+            DesignationChangeRequest.StatusChoices.REJECTED,
+        )
+        if new_status not in valid_statuses:
+            raise ValueError("status must be 'approved' or 'rejected'.")
+ 
+        req_obj = DesignationChangeRequest.objects.select_related("user").get(pk=pk)
+ 
+        if req_obj.status != DesignationChangeRequest.StatusChoices.PENDING:
+            raise ValueError("This request has already been resolved.")
+ 
+        req_obj.status      = new_status
+        req_obj.admin_note  = admin_note or ""
+        req_obj.resolved_at = timezone.now()
+        req_obj.resolved_by = resolved_by
+        req_obj.save()
+ 
+        if new_status == DesignationChangeRequest.StatusChoices.APPROVED:
+            user = req_obj.user
+            user.designation = req_obj.requested_designation
+            user.save(update_fields=["designation"])
+ 
+        return req_obj
 
 class StorageService:
     """
@@ -729,7 +822,37 @@ class FileService:
         file_obj.save(update_fields=['is_deleted'])
         return file_obj
 
+    @staticmethod
+    def bulk_restore_deleted_files(user, file_ids):
+        if not file_ids or not isinstance(file_ids, list):
+            raise ValueError("Provide a valid list of file_ids.")
+        files = File.objects.filter(id__in=file_ids, user=user, is_deleted=True)
+        return files.update(is_deleted=False)
+
+    @staticmethod
+    def empty_user_trash(user):
+        with transaction.atomic():
+            files = File.objects.filter(user=user, is_deleted=True)
+            total_size = files.aggregate(Sum('file_size'))['file_size__sum'] or 0
+            count = files.count()
+            
+            # Permanently delete associated files
+            for f in files:
+                if f.file:
+                    f.file.delete(save=False)
+            
+            files.delete()
+            StorageService.release(user.id, total_size)
+            return count
+
     
+    @staticmethod
+    def bulk_unarchive_files(user, file_ids):
+        if not file_ids or not isinstance(file_ids, list):
+            raise ValueError("Provide a valid list of file_ids.")
+        files = File.objects.filter(id__in=file_ids, user=user, is_archive=True)
+        return files.update(is_archive=False, archived_at=None)
+
     @staticmethod
     def get_recent_files(user):
         return File.objects.filter(user=user, is_deleted=False, is_archive=False).order_by('-last_accessed')[:9]
