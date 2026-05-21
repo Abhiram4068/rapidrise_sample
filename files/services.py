@@ -1007,7 +1007,7 @@ class FileShareService:
         send email
         """
         email_subject = f"{share.owner.email} shared '{share.file.original_name}' with you"
-        share_url = f"{settings.BACKEND_BASE_URL}/api/files/public/{share.share_token}/"
+        share_url = f"{settings.FRONTEND_URL}/files/public/{share.share_token}/"
 
         title_display = f"\n        Title: {title}" if title else ""
         message_display = f"\n        Message from sender: \"{message}\"" if message else ""
