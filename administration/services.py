@@ -16,8 +16,10 @@ class AdminUserService:
             User.AccountStatus.DEACTIVATED
         ]
         return User.objects.filter(
-            Q(account_status__in=allowed_statuses) | Q(is_active=True)
-        ).distinct().order_by('-date_joined')
+    account_status__in=allowed_statuses,
+    is_superuser=False,
+    is_staff=False
+).order_by('-date_joined').distinct()
 
     @staticmethod
     def get_blocked_users():
@@ -57,7 +59,7 @@ message=( f"Hi {user.first_name},\n\n" "Your HiveDrive account has been reviewed
             User.AccountStatus.BLOCKED,
             User.AccountStatus.DELETED
             ]
-            user_details=User.objects.get(id=pk, account_status__in=allowed_statuses)
+            user_details=User.objects.get(id=pk, account_status__in=allowed_statuses, is_superuser=False)
             return user_details
         except User.DoesNotExist:
             raise NotFound("User doesnt exists or is deleted")
