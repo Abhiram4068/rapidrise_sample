@@ -1,16 +1,17 @@
-from .models import User, File, FileShareLink, Collection, CollectionFile, ScheduledMail, ReactivationRequest
+from .models import User, File, FileShareLink, Collection, CollectionFile, ScheduledMail, ReactivationRequest, DesignationChangeRequest
 from rest_framework import serializers
 from django.contrib.auth.password_validation import validate_password
 from django.db import models
 from django.utils import timezone
 from datetime import timedelta
- 
+from administration.models import Designation 
 import logging
 logger = logging.getLogger(__name__)
 
 class RegisterSerializer(serializers.ModelSerializer):
     confirm_password=serializers.CharField(write_only=True, min_length=8)
     date_of_birth = serializers.DateField(required=False, allow_null=True)
+    email = serializers.EmailField()
     class Meta:
         model=User
         fields=[
@@ -27,7 +28,18 @@ class RegisterSerializer(serializers.ModelSerializer):
             'date_of_birth':{'required':False}
         }
     def validate_email(self, value):
-        return value.lower().strip()
+        email=value.lower().strip()
+        existing_user=User.objects.filter(email=email).first()
+        if existing_user:
+            if existing_user.account_status == User.AccountStatus.WAITING_FOR_APPROVAL:
+                raise serializers.ValidationError("Your account is waiting for approval. Please contact the administrator.")
+            elif existing_user.account_status == User.AccountStatus.BLOCKED:
+                raise serializers.ValidationError("Your account has been blocked by the administrator. Access to this platform has been permanently restricted until reviewed by the admin team. Only an administrator can revoke this restriction and restore account access.")
+            elif existing_user.account_status == User.AccountStatus.DELETED:
+                raise serializers.ValidationError("Your account has been deleted by the administrator. Access to this platform has been permanently restricted until reviewed by the admin team. Only an administrator can revoke this restriction and restore account access.")
+            else:
+                raise serializers.ValidationError("Email already exists")
+        return value
     def validate(self, attrs):
         password=attrs.get('password')
         confirm_password=attrs.get('confirm_password')
@@ -45,7 +57,12 @@ class LoginSerializer(serializers.Serializer):
         write_only=True,
         required=True
     )
-    
+
+class DesignationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Designation
+        fields = ['id', 'name']
+
 class ForgotPasswordSerializer(serializers.Serializer):
     email = serializers.EmailField()
 
@@ -102,7 +119,7 @@ class ChangePasswordSerialzier(serializers.Serializer):
     def validate_current_password(self, value):
         user=self.context["request"].user
         if not user.check_password(value):
-            raise serializers.ValidationError("Invalid Credentials!!!")
+            raise serializers.ValidationError("Incorrect current password. Please try again.")
         return value
     def validate(self, data):
         if data["new_password"]!=data["confirm_password"]:
@@ -113,7 +130,99 @@ class ChangePasswordSerialzier(serializers.Serializer):
         if (self.context["request"].user.check_password(data["new_password"])):
             raise serializers.ValidationError({"new_password": "New password cannot be same as old password"})
         return data
+class DesignationChangeRequestAdminSerializer(serializers.ModelSerializer):
+    """
+    Used by admins to list all requests and resolve (approve / reject) them.
+    """
+    user_email     = serializers.EmailField(source="user.email",      read_only=True)
+    user_full_name = serializers.SerializerMethodField()
+    current_designation_display   = serializers.CharField(source="get_current_designation_display",   read_only=True)
+    requested_designation_display = serializers.CharField(source="get_requested_designation_display", read_only=True)
+ 
+    class Meta:
+        model  = DesignationChangeRequest
+        fields = [
+            "id",
+            "user_email",
+            "user_full_name",
+            "current_designation",
+            "current_designation_display",
+            "requested_designation",
+            "requested_designation_display",
+            "status",
+            "admin_note",
+            "created_at",
+            "resolved_at",
+        ]
+        read_only_fields = [
+            "id", "user_email", "user_full_name",
+            "current_designation", "current_designation_display",
+            "requested_designation", "requested_designation_display",
+            "created_at", "resolved_at",
+        ]
+ 
+    def get_user_full_name(self, obj):
+        return f"{obj.user.first_name} {obj.user.last_name}".strip()
+ 
 
+class DesignationChangeRequestCreateSerializer(serializers.ModelSerializer):
+    """
+    Used by the user to submit a new designation change request.
+    Only `requested_designation` is writable — everything else is set server-side.
+    """
+    class Meta:
+        model  = DesignationChangeRequest
+        fields = ["id", "requested_designation", "status", "created_at"]
+        read_only_fields = ["id", "status", "created_at"]
+ 
+    def validate_requested_designation(self, value):
+        user = self.context["request"].user
+        if value == user.designation:
+            raise serializers.ValidationError(
+                "Requested designation must be different from your current designation."
+            )
+        return value
+ 
+    def validate(self, attrs):
+        user = self.context["request"].user
+        # Block if a pending request already exists
+        if DesignationChangeRequest.objects.filter(
+            user=user, status=DesignationChangeRequest.StatusChoices.PENDING
+        ).exists():
+            raise serializers.ValidationError(
+                "You already have a pending designation change request. "
+                "Please wait for it to be resolved before submitting a new one."
+            )
+        return attrs
+ 
+    def create(self, validated_data):
+        user = self.context["request"].user
+        validated_data["user"] = user
+        validated_data["current_designation"] = user.designation
+        return super().create(validated_data)
+ 
+ 
+class DesignationChangeRequestListSerializer(serializers.ModelSerializer):
+    """
+    Used by the user to list their own past requests.
+    """
+    current_designation_display   = serializers.CharField(source="get_current_designation_display",   read_only=True)
+    requested_designation_display = serializers.CharField(source="get_requested_designation_display", read_only=True)
+ 
+    class Meta:
+        model  = DesignationChangeRequest
+        fields = [
+            "id",
+            "current_designation",
+            "current_designation_display",
+            "requested_designation",
+            "requested_designation_display",
+            "status",
+            "admin_note",
+            "created_at",
+            "resolved_at",
+        ]
+        read_only_fields = fields
 class ReactivationRequestSerializer(serializers.ModelSerializer):
     user_id = serializers.IntegerField(source='user.id', read_only=True)
     user_email = serializers.EmailField(source='user.email', read_only=True)
@@ -285,7 +394,8 @@ class FileUpdateSerializer(serializers.ModelSerializer):
             return None
         return value
     
-    
+
+
 class CollectionSerializer(serializers.ModelSerializer):
     total_files = serializers.SerializerMethodField()
     total_size = serializers.SerializerMethodField()

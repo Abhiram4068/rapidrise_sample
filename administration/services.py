@@ -3,6 +3,10 @@ from rest_framework.exceptions import NotFound
 from django.contrib.auth import get_user_model
 from django.core.mail import send_mail
 from django.conf import settings
+from .models import Designation
+from django.shortcuts import get_object_or_404
+import logging
+logger = logging.getLogger(__name__)
 
 User = get_user_model()
 
@@ -101,8 +105,29 @@ message=( f"Hi {user.first_name},\n\n" "Your HiveDrive account has been reviewed
     def resolve_new_user_request(user_id, action):
         try:
             user = User.objects.get(id=user_id, account_status=User.AccountStatus.WAITING_FOR_APPROVAL)
+            user_email=user.email
             if action == 'accept':
                 user.account_status = User.AccountStatus.ACTIVE
+                def send_email():
+                    try:
+                        send_mail(
+                            subject="Your Account Request Has Been Approved",
+                            message=(
+                                f"Hi {user.first_name},\n\n"
+                                "Your registration request has been approved by the administrator.\n"
+                                "Your account is now active and you can log in to access the platform.\n\n"
+                                "If you did not create this account, please contact support immediately.\n\n"
+                                "Thank you."
+                            ),
+                            from_email=settings.DEFAULT_FROM_EMAIL,
+                            recipient_list=[user_email],
+                            fail_silently=False,
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to send approval email to {user_email}: {e}")
+
+                import threading
+                threading.Thread(target=send_email).start()
             elif action == 'reject':
                 user.account_status = User.AccountStatus.REJECTED
             else:
@@ -184,6 +209,35 @@ message=( f"Hi {user.first_name},\n\n" "Your HiveDrive account has been reviewed
         except User.DoesNotExist:
             raise NotFound("Deleted user not found.")
 
+    @staticmethod
+    def get_designation_change_requests():
+        from files.models import DesignationChangeRequest
+        return DesignationChangeRequest.objects.filter(status=DesignationChangeRequest.StatusChoices.PENDING).order_by('-created_at')
+
+    @staticmethod
+    def resolve_designation_change_request(pk, action, admin_user):
+        from files.models import DesignationChangeRequest
+        try:
+            request = DesignationChangeRequest.objects.get(pk=pk, status=DesignationChangeRequest.StatusChoices.PENDING)
+            
+            if action == 'approve':
+                user = request.user
+                user.designation = request.requested_designation
+                user.save()
+                
+                request.status = DesignationChangeRequest.StatusChoices.APPROVED
+            elif action == 'reject':
+                request.status = DesignationChangeRequest.StatusChoices.REJECTED
+            else:
+                raise ValueError("Invalid action. Must be 'approve' or 'reject'.")
+
+            request.resolved_by = admin_user
+            request.resolved_at = timezone.now()
+            request.save()
+            return request
+        except DesignationChangeRequest.DoesNotExist:
+            raise NotFound("Designation change request not found or already resolved.")
+
 class AdminDashboardService:
     @staticmethod
     def get_stats():
@@ -223,3 +277,20 @@ class AdminDashboardService:
 
 
 
+class DesignationService:
+
+    @staticmethod
+    def get_all_designations():
+        return Designation.objects.all()
+    
+    @staticmethod
+    def create_designation(validated_data: dict) -> Designation:
+        return Designation.objects.create(**validated_data)
+
+    @staticmethod
+    def delete_designation(pk: int) -> dict:
+        """Hard-delete a designation by PK."""
+        designation = get_object_or_404(Designation, pk=pk)
+        name = designation.name
+        designation.delete()
+        return {"message": f"Designation '{name}' has been removed successfully."}
