@@ -1,4 +1,4 @@
-from .models import User, File, FileShareLink, Collection, CollectionFile, ScheduledMail, ReactivationRequest, DesignationChangeRequest
+from .models import User, File, FileShareLink, ShareBundle, Collection, CollectionFile, ScheduledMail, ReactivationRequest, DesignationChangeRequest
 from rest_framework import serializers
 from django.contrib.auth.password_validation import validate_password
 from django.db import models
@@ -513,8 +513,8 @@ class FileShareCreateSerializer(serializers.Serializer):
         return data
 
 class FileShareListSerializer(serializers.ModelSerializer):
-    file_name=serializers.CharField(source='file.original_name', read_only=True)
-    file_size=serializers.IntegerField(source='file.file_size', read_only=True)
+    file_name = serializers.SerializerMethodField()
+    file_size = serializers.SerializerMethodField()
     owner_email = serializers.EmailField(source='owner.email', read_only=True)
     recipient_email = serializers.EmailField(read_only=True)
     created_at = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", read_only=True)
@@ -523,8 +523,10 @@ class FileShareListSerializer(serializers.ModelSerializer):
     is_active = serializers.SerializerMethodField()
     share_url = serializers.SerializerMethodField()
     status = serializers.SerializerMethodField()
-    content_type = serializers.CharField(source='file.content_type', read_only=True)
-    file_id = serializers.UUIDField(source='file.id', read_only=True)
+    content_type = serializers.SerializerMethodField()
+    file_id = serializers.SerializerMethodField()
+    bundle_id = serializers.UUIDField(source='bundle.id', read_only=True, allow_null=True)
+    is_bundle = serializers.SerializerMethodField()
 
     permission = serializers.CharField(read_only=True)
     download_limit = serializers.IntegerField(read_only=True, allow_null=True)
@@ -541,7 +543,7 @@ class FileShareListSerializer(serializers.ModelSerializer):
             'id', 'file_name', 'file_size', 'owner_email', 
             'recipient_email', 'created_at', 'expiration_datetime',
             'accessed_at', 'is_active', 'share_url', 'status', 'content_type', 'revoked_at',
-            'file_id',
+            'file_id', 'bundle_id', 'is_bundle',
             'permission', 'download_limit', 'download_count', 'downloads_remaining', 
 
             'view_limit', 'view_count', 'views_remaining',  
@@ -568,10 +570,25 @@ class FileShareListSerializer(serializers.ModelSerializer):
         return "Active"     
 
     def get_content_type(self, obj):
-        return obj.file.content_type
+        if obj.file:
+            return obj.file.content_type
+        return "application/zip" # Fixed type for bundles
 
     def get_file_id(self, obj):
-        return obj.file.id
+        return obj.file.id if obj.file else None
+
+    def get_file_name(self, obj):
+        if obj.file:
+            return obj.file.original_name
+        return obj.bundle.title or "Bulk Share Package"
+
+    def get_file_size(self, obj):
+        if obj.file:
+            return obj.file.file_size
+        return 0 # Bundle size calculated elsewhere if needed
+
+    def get_is_bundle(self, obj):
+        return obj.bundle is not None
     def get_downloads_remaining(self, obj):
         if obj.permission == 'one_time_download':
             return 0 if obj.download_count >= 1 else 1
@@ -584,8 +601,199 @@ class FileShareListSerializer(serializers.ModelSerializer):
         if obj.permission in ('view_only', 'view_download') and obj.view_limit is not None:
             return max(obj.view_limit - obj.view_count, 0)
         return None 
-    
 
+class ShareBundleSerializer(serializers.ModelSerializer):
+    owner_email = serializers.EmailField(source='owner.email', read_only=True)
+    is_expired = serializers.SerializerMethodField()
+    share_url = serializers.SerializerMethodField()
+    file_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ShareBundle
+        fields = [
+            'id', 'title', 'message', 'owner_email', 
+            'share_token', 'expiration_datetime',
+            'is_expired', 'share_url', 'file_count',
+            'permission', 'download_limit', 'download_count',
+            'view_limit', 'view_count', 'is_active'
+        ]
+        read_only_fields = ['id', 'share_token', 'download_count', 'view_count']
+
+    def get_is_expired(self, obj):
+        return timezone.now() > obj.expiration_datetime
+
+    def get_share_url(self, obj):
+        request = self.context.get('request')
+        if request:
+            return request.build_absolute_uri(f'/api/files/public/{obj.share_token}/')
+        return f'/api/files/public/{obj.share_token}/'
+
+    def get_file_count(self, obj):
+        return obj.items.count()
+
+
+class BulkFileShareSerializer(serializers.Serializer):
+
+    file_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        allow_empty=False,
+        max_length=100
+    )
+
+    recipient_emails = serializers.ListField(
+        child=serializers.EmailField(),
+        allow_empty=False,
+        max_length=50
+    )
+
+    expiration_datetime = serializers.IntegerField(
+        min_value=1,
+        max_value=168
+    )
+
+    title = serializers.CharField(
+        max_length=500,
+        required=False,
+        allow_blank=True
+    )
+
+    message = serializers.CharField(
+        max_length=2000,
+        required=False,
+        allow_blank=True
+    )
+
+    schedule_at = serializers.DateTimeField(
+        required=False
+    )
+
+    permission = serializers.ChoiceField(
+        choices=[
+            'view_only',
+            'view_download',
+            'one_time_download',
+            'full_access'
+        ],
+        default='view_only'
+    )
+
+    download_limit = serializers.IntegerField(
+        min_value=1,
+        required=False,
+        allow_null=True
+    )
+
+    view_limit = serializers.IntegerField(
+        min_value=1,
+        required=False,
+        allow_null=True
+    )
+
+    def validate_file_ids(self, value):
+        request = self.context.get('request')
+        unique_file_ids = list(set(value))
+
+        if len(unique_file_ids) != len(value):
+            raise serializers.ValidationError(
+                "Duplicate file ids are not allowed."
+            )
+
+        files = File.objects.filter(
+            id__in=unique_file_ids,
+            user=request.user
+        )
+
+        if files.count() != len(unique_file_ids):
+            raise serializers.ValidationError(
+                "Some files do not exist or you do not have permission."
+            )
+
+        return unique_file_ids
+
+
+    def validate_recipient_emails(self, value):
+
+        normalized_emails = [email.lower().strip() for email in value]
+
+        unique_emails = list(set(normalized_emails))
+
+        if len(unique_emails) != len(normalized_emails):
+            raise serializers.ValidationError(
+                "Duplicate recipient emails are not allowed."
+            )
+
+        request = self.context.get('request')
+
+        if request.user.email.lower() in unique_emails:
+            raise serializers.ValidationError(
+                "You cannot share files with yourself."
+            )
+
+        return unique_emails
+
+
+    def validate_schedule_at(self, value):
+
+        if value <= timezone.now():
+            raise serializers.ValidationError(
+                "Schedule time must be in the future."
+            )
+
+        return value
+
+
+    def validate(self, data):
+
+        permission = data.get('permission')
+
+        download_limit = data.get('download_limit')
+        view_limit = data.get('view_limit')
+
+
+        if permission == 'one_time_download':
+
+            data['download_limit'] = 1
+            data['view_limit'] = None
+
+
+
+        elif permission == 'view_download':
+
+            if download_limit is not None and download_limit < 1:
+                raise serializers.ValidationError({
+                    "download_limit":
+                        "Download limit must be greater than 0."
+                })
+
+        else:
+            data['download_limit'] = None
+
+
+        if permission not in ['view_only', 'view_download']:
+            data['view_limit'] = None
+
+        if view_limit is not None and view_limit < 1:
+            raise serializers.ValidationError({
+                "view_limit":
+                    "View limit must be greater than 0."
+            })
+
+
+        if len(data['file_ids']) > 20:
+            raise serializers.ValidationError({
+                "file_ids":
+                    "Maximum 20 files allowed per share."
+            })
+
+        if len(data['recipient_emails']) > 10:
+            raise serializers.ValidationError({
+                "recipient_emails":
+                    "Maximum 10 recipients allowed."
+            })
+
+        return data
+
+    
 class ScheduledMailSerializer(serializers.ModelSerializer):
     # FileShareLink fields via the 'share' FK
     file_name = serializers.CharField(source='share.file.original_name', read_only=True)
@@ -656,30 +864,6 @@ class FileShareSerializer(serializers.ModelSerializer):
 class PublicFileSerializer(serializers.Serializer):
     token = serializers.CharField()
 
-    def validate_token(self, value):
-        try:
-            share = FileShareLink.objects.select_related('file', 'owner').get(
-                share_token=value
-            )
-        except FileShareLink.DoesNotExist:
-            raise serializers.ValidationError("This link is invalid or does not exist.")
-
-        # Priority 1: Check if expired (even if inactive/revoked, expiration is often the primary reason)
-        if share.expiration_datetime and share.expiration_datetime < timezone.now():
-            raise serializers.ValidationError("This access link has expired.")
-
-        # Priority 2: Check if manually revoked
-        if share.revoked_at:
-            raise serializers.ValidationError("This access link has been revoked.")
-
-        # Priority 3: Check general activity (e.g. one-time used)
-        if not share.is_active:
-            if share.permission == 'one_time_download' and share.accessed:
-                raise serializers.ValidationError("This one-time link has already been used.")
-            raise serializers.ValidationError("This access link is currently inactive.")
-
-        self.share = share
-        return value
 
 class ReportQuerySerializer(serializers.Serializer):
     download = serializers.BooleanField(required=False, default=False)

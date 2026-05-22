@@ -932,7 +932,7 @@ class FileShareCreateListUpdateView(APIView):
                     share=FileShareService.create_share_token(file_id=file_id,
                                                               owner=request.user,
                                                               recipient_email=email,
-                                                              expiration_hours=serializer.validated_data['expiration_datetime'],
+                                                              expiration_datetime=serializer.validated_data['expiration_datetime'],
                                                               title=serializer.validated_data.get('title', ''),
                                                               message=serializer.validated_data.get('message', ''),
                                                               schedule_at=serializer.validated_data.get('schedule_at'),
@@ -991,6 +991,90 @@ class FileShareCreateListUpdateView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
 
+
+
+
+from .serializers import BulkFileShareSerializer
+from .services import FileShareService
+from .serializers import ShareBundleSerializer
+
+
+import traceback
+
+class BulkFileShareView(APIView):
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+
+        serializer = BulkFileShareSerializer(
+            data=request.data,
+            context={'request': request}
+        )
+
+        serializer.is_valid(raise_exception=True)
+
+        print(serializer.validated_data)
+
+        try:
+
+            bundle = FileShareService.create_bulk_share(
+                owner=request.user,
+                file_ids=serializer.validated_data['file_ids'],
+                recipient_emails=serializer.validated_data['recipient_emails'],
+                expiration_datetime=serializer.validated_data['expiration_datetime'],
+                permission=serializer.validated_data['permission'],
+                title=serializer.validated_data.get('title', ''),
+                message=serializer.validated_data.get('message', ''),
+                schedule_at=serializer.validated_data.get('schedule_at'),
+                download_limit=serializer.validated_data.get('download_limit'),
+                view_limit=serializer.validated_data.get('view_limit')
+            )
+
+            response_serializer = ShareBundleSerializer(
+                bundle,
+                context={'request': request}
+            )
+
+            return Response(
+                {
+                    "message": (
+                        f"{len(serializer.validated_data['file_ids'])} "
+                        f"files shared successfully with "
+                        f"{len(serializer.validated_data['recipient_emails'])} "
+                        f"recipient(s)"
+                    ),
+                    "data": response_serializer.data
+                },
+                status=status.HTTP_201_CREATED
+            )
+
+        except ValueError as e:
+
+            print("ValueError:", str(e))
+
+            return Response(
+                {
+                    "error": str(e)
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        except Exception as e:
+
+            print("Unexpected Error:", str(e))
+            traceback.print_exc()
+
+            return Response(
+                {
+                    "error": "Something went wrong while sharing files."
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+
+
 class FileShareScheduleCreateListView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -1012,7 +1096,7 @@ class FileShareScheduleCreateListView(APIView):
                         file_id=file_id,
                         owner=request.user,
                         recipient_email=email,
-                        expiration_hours=serializer.validated_data['expiration_datetime'],
+                        expiration_datetime=serializer.validated_data['expiration_datetime'],
                         title=serializer.validated_data.get('title', ''),
                         message=serializer.validated_data.get('message', ''),
                         schedule_at=schedule_at
@@ -1120,97 +1204,20 @@ class PublicFileAccessView(APIView):
     permission_classes = []
 
     def get(self, request, token):
-        serializer = PublicFileSerializer(data={'token': token})
-        if not serializer.is_valid():
-            error_message = next(iter(serializer.errors.values()))[0]
-            status_code = status.HTTP_404_NOT_FOUND
-            if 'expired' in str(error_message).lower():
-                status_code = status.HTTP_410_GONE
-            elif 'revoked' in str(error_message).lower() or 'used' in str(error_message).lower():
-                status_code = status.HTTP_403_FORBIDDEN
-            return Response({'error': str(error_message)}, status=status_code)
+        try:
+            share = ViewFileShareService.get_share_or_404(token)
+        except ValueError as e:
+            return Response({'error': str(e)}, status=status.HTTP_403_FORBIDDEN)
 
-        share = serializer.share
-        action = request.query_params.get('action')
-
-        if not action:
-            return Response({
-                'file_name': share.file.original_name,
-                'file_size': share.file.file_size,
-                'content_type': share.file.content_type,
-                'sender_name': f"{share.owner.first_name} {share.owner.last_name}",
-                'sender_email': share.owner.email,
-                'permission': share.permission,
-                'view_limit': share.view_limit,
-                'view_count': share.view_count,
-                'download_limit': share.download_limit,
-                'download_count': share.download_count,
-                'expiration_datetime': share.expiration_datetime,
-                'accessed': share.accessed
-            })
-
-        # ── VIEW action ──────────────────────────────────────────────────
-        if action == 'view':
-            if share.permission == 'one_time_download':
-                return Response(
-                    {'error': 'This link is download-only.'},
-                    status=status.HTTP_403_FORBIDDEN
-                )
-
-            # check view limit
-            if share.view_limit is not None and share.view_count >= share.view_limit:
-                return Response(
-                    {
-                        'error': 'View limit reached.',
-                        'message': 'The maximum number of views for this link has been reached.'
-                    },
-                    status=status.HTTP_403_FORBIDDEN
-                )
-
-            ViewFileShareService.mark_as_accessed(share)
-            share.view_count = F('view_count') + 1
-            share.save(update_fields=['view_count'])
-
+        ViewFileShareService.increment_access_counts(share)
+        
+        if share.is_bundle:
+            file_obj, filename = ViewFileShareService.get_zip_response(share)
+        else:
             file_obj, filename = ViewFileShareService.get_file_response(share)
-            return FileResponse(file_obj, as_attachment=False, filename=filename)
-
-        # ── DOWNLOAD action ──────────────────────────────────────────────
-        if share.permission == 'view_only':
-            return Response(
-                {'error': 'Download not allowed for this link.'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-
-        if share.permission == 'view_download' and share.download_limit is not None:
-            if share.download_count >= share.download_limit:
-                return Response(
-                    {
-                        'error': 'Download limit reached.',
-                        'message': 'The maximum number of downloads for this file has been reached.'
-                    },
-                    status=status.HTTP_403_FORBIDDEN
-                )
-
-        if share.permission == 'one_time_download' and share.accessed:
-            return Response(
-                {
-                    'error': 'File has already been downloaded.',
-                    'message': 'This link only allows a single download.'
-                },
-                status=status.HTTP_403_FORBIDDEN
-            )
-
-        ViewFileShareService.mark_as_accessed(share)
-
-        share.download_count = F('download_count') + 1
-        share.save(update_fields=['download_count'])
-
-        if share.permission == 'one_time_download':
-            share.is_active = False
-            share.save(update_fields=['is_active'])
-
-        file_obj, filename = ViewFileShareService.get_file_response(share)
+            
         return FileResponse(file_obj, as_attachment=True, filename=filename)
+
 from django.utils import timezone
 
 class PublicFileVerifyView(APIView):

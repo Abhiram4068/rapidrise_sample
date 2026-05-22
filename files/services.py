@@ -12,11 +12,14 @@ from django.shortcuts import get_object_or_404
 import secrets
 from django.utils import timezone
 from django.utils.timezone import localtime
+import zipfile
+import io
 from datetime import timedelta
 import csv
 from io import StringIO
-from django.core.mail import send_mail
+from django.core.mail import send_mail, EmailMessage
 from django.conf import settings
+from django.core.files.base import ContentFile
 from django.db.models import Sum, Count
 from django.contrib.auth import update_session_auth_hash
 from .exceptions import StorageLimitExceeded
@@ -1076,20 +1079,22 @@ class FileShareService:
     @staticmethod
     def generate_share_token():
         return secrets.token_urlsafe(32)
+
     @staticmethod
-    def create_share_token(file_id, owner, recipient_email, expiration_hours, title, message, schedule_at=None,
-        permission='view_only', download_limit=None, view_limit=None):
+    def create_share_token(file_id, owner, recipient_email, expiration_datetime, title, message, schedule_at=None,
+                           permission='view_only', download_limit=None, view_limit=None):
         """
-        for creating a file token and returns a fileshare link
+        Creates a file share link for a single file.
         """
         try:
-            file=File.objects.get(id=file_id, user=owner)
+            file = File.objects.get(id=file_id, user=owner)
         except File.DoesNotExist:
-            raise ValueError("File not found or you dont have the permission")
-        share_token=FileShareService.generate_share_token()
-        expiration_datetime = timezone.now() + timedelta(hours=expiration_hours)
+            raise ValueError("File not found or you don't have the permission")
+        
+        share_token = FileShareService.generate_share_token()
+        expiration_datetime = timezone.now() + timedelta(hours=expiration_datetime)
 
-        share=FileShareLink.objects.create(
+        share = FileShareLink.objects.create(
             file=file,
             owner=owner,
             recipient_email=recipient_email.lower(),
@@ -1101,6 +1106,7 @@ class FileShareService:
         )
 
         if schedule_at:
+            from .models import ScheduledMail
             scheduled_mail = ScheduledMail.objects.create(
                 share=share,
                 title=title,
@@ -1123,7 +1129,161 @@ class FileShareService:
                 args=(share, message, title)
             ).start()
         return share
-    
+
+    @staticmethod
+    def send_bulk_share_email(bundle_id):
+        from .models import ShareBundle, FileShareLink
+        try:
+            bundle = ShareBundle.objects.select_related('owner').get(id=bundle_id)
+            share_links = FileShareLink.objects.filter(bundle=bundle)
+            
+            for share in share_links:
+                subject = f"File shared with you: {bundle.title or 'RapidRise Package'}"
+                share_url = f"{settings.FRONTEND_URL}/files/public/{share.share_token}/"
+                
+                message_text = f"""
+                Hello,
+
+                {bundle.owner.email} has shared a zip package with you.
+                
+                Title: {bundle.title or 'N/A'}
+                Message: {bundle.message or 'No message provided.'}
+                
+                You can access it here: {share_url}
+                
+                Best regards,
+                RapidRise Team
+                """
+                
+                email = EmailMessage(
+                    subject,
+                    message_text,
+                    settings.DEFAULT_FROM_EMAIL,
+                    [share.recipient_email]
+                )
+                email.send()
+            return True
+        except Exception as e:
+            logger.error(f"Error sending bulk share email: {e}")
+            return False
+
+    @staticmethod
+    @transaction.atomic
+    def create_bulk_share(
+        owner,
+        file_ids,
+        recipient_emails,
+        expiration_datetime,
+        permission,
+        title='',
+        message='',
+        schedule_at=None,
+        download_limit=None,
+        view_limit=None
+    ):
+
+        files = File.objects.filter(
+            id__in=file_ids,
+            user=owner
+        )
+
+        if files.count() != len(file_ids):
+            raise ValueError(
+                "Some files are invalid or inaccessible."
+            )
+
+        token = FileShareService.generate_share_token()
+
+        expiration_datetime = (
+            timezone.now() +
+            timedelta(hours=expiration_datetime)
+        )
+
+        from .models import ShareBundle, ShareBundleItem, BundleRecipient
+        bundle = ShareBundle.objects.create(
+            owner=owner,
+            share_token=token,
+            title=title,
+            message=message,
+            permission=permission,
+            expiration_datetime=expiration_datetime,
+            download_limit=download_limit,
+            view_limit=view_limit
+        )
+
+        # ---------------------------------
+        # BULK INSERT FILES
+        # ---------------------------------
+
+        bundle_items = [
+            ShareBundleItem(
+                bundle=bundle,
+                file=file
+            )
+            for file in files
+        ]
+        ShareBundleItem.objects.bulk_create(bundle_items)
+
+        # ---------------------------------
+        # BULK INSERT RECIPIENTS (Unify with FileShareLink)
+        # ---------------------------------
+        from .models import FileShareLink
+        FileShareLink.objects.bulk_create([
+            FileShareLink(
+                bundle=bundle,
+                owner=owner,
+                recipient_email=email.lower(),
+                share_token=FileShareService.generate_share_token(),
+                expiration_datetime=expiration_datetime,
+                permission=permission,
+                download_limit=download_limit,
+                view_limit=view_limit
+            )
+            for email in recipient_emails
+        ])
+
+        # ---------------------------------
+        # ZIP FILE CREATION
+        # ---------------------------------
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            for item in bundle_items:
+                file_obj = item.file
+                if file_obj.file:
+                    file_name = file_obj.original_name or os.path.basename(file_obj.file.name)
+                else:
+                    # In case of local files or other scenarios where f.file is not a FieldFile
+                    file_name = file_obj.original_name or f"file_{file_obj.id}"
+                
+                try:
+                    with file_obj.file.open('rb') as f:
+                        zip_file.writestr(file_name, f.read())
+                except Exception as e:
+                    logger.error(f"Failed to add file {file_obj.id} to zip: {e}")
+
+        zip_content = zip_buffer.getvalue()
+        zip_filename = f"share_bundle_{bundle.share_token[:8]}.zip"
+        bundle.zip_file.save(zip_filename, ContentFile(zip_content), save=True)
+
+        # ---------------------------------
+        # EMAIL TASK
+        # ---------------------------------
+
+        if schedule_at:
+            from .tasks import send_bulk_share_email
+            send_bulk_share_email.apply_async(
+                args=[str(bundle.id)],
+                eta=schedule_at
+            )
+        else:
+            import threading
+            threading.Thread(
+                target=FileShareService.send_bulk_share_email,
+                args=(bundle.id,)
+            ).start()
+
+        return bundle
+
     @staticmethod
     def send_share_email(share, message, title=None):
         """
@@ -1171,7 +1331,7 @@ class FileShareService:
 
     @staticmethod
     def get_user_shares(user):
-        shares=FileShareLink.objects.filter(owner=user)
+        shares=FileShareLink.objects.filter(owner=user).select_related('file', 'bundle')
         return shares
 
     @staticmethod
@@ -1241,10 +1401,81 @@ class FileShareService:
 
 class ViewFileShareService:
     @staticmethod
+    def get_share_or_404(token):
+        """
+        Look up the token in FileShareLink first, then ShareBundle.
+        Attaches an `is_bundle` flag so the view knows which type it got.
+        Raises Http404 if not found, or ValueError if expired/revoked/limits exceeded.
+        """
+        from .models import FileShareLink, ShareBundle
+        from django.http import Http404
+
+        # Try single-file or bundle-based share link
+        try:
+            share = FileShareLink.objects.select_related('file', 'owner', 'bundle').get(
+                share_token=token
+            )
+            if not share.is_active:
+                raise ValueError("This share link has been revoked.")
+            if share.expiration_datetime and share.expiration_datetime < timezone.now():
+                raise ValueError("This share link has expired.")
+            if share.view_limit and share.view_count >= share.view_limit:
+                raise ValueError("View limit reached for this share.")
+            if share.download_limit and share.download_count >= share.download_limit:
+                raise ValueError("Download limit reached for this share.")
+            
+            # If it's a bundle-based share, mark it so the view knows
+            share.is_bundle = True if share.bundle else False
+            return share
+        except FileShareLink.DoesNotExist:
+            pass
+
+        # Try bundle share
+        try:
+            bundle = ShareBundle.objects.select_related('owner').get(
+                share_token=token
+            )
+            if not bundle.is_active:
+                raise ValueError("This share link has been revoked.")
+            if bundle.expiration_datetime and bundle.expiration_datetime < timezone.now():
+                raise ValueError("This share link has expired.")
+            if bundle.view_limit and bundle.view_count >= bundle.view_limit:
+                raise ValueError("View limit reached for this share.")
+            if bundle.download_limit and bundle.download_count >= bundle.download_limit:
+                raise ValueError("Download limit reached for this share.")
+            bundle.is_bundle = True
+            return bundle
+        except ShareBundle.DoesNotExist:
+            pass
+
+        raise Http404("Share link not found.")
+
+    @staticmethod
+    def increment_access_counts(share):
+        """Increment view and download counts for both share types."""
+        share.view_count = (share.view_count or 0) + 1
+        share.download_count = (share.download_count or 0) + 1
+        share.save(update_fields=['view_count', 'download_count'])
+
+        # If it's a bundle-based share, increment the bundle counts too
+        if hasattr(share, 'bundle') and share.bundle:
+            bundle = share.bundle
+            bundle.view_count = (bundle.view_count or 0) + 1
+            bundle.download_count = (bundle.download_count or 0) + 1
+            bundle.save(update_fields=['view_count', 'download_count'])
+
+    @staticmethod
     def get_file_response(share):
         return share.file.file.open("rb"), share.file.original_name
 
-    
+    @staticmethod
+    def get_zip_response(share):
+        """Return the zip file and filename for a ShareBundle or bundle-based FileShareLink."""
+        target = share.bundle if hasattr(share, 'bundle') and share.bundle else share
+        if not target.zip_file:
+            raise ValueError("No zip file available for this bundle.")
+        return target.zip_file.open("rb"), f"{target.title or 'shared_files'}.zip"
+
     @staticmethod
     def mark_as_accessed(share):
         if not share.accessed:
@@ -1344,7 +1575,7 @@ class ReportService:
             data.append({
                 "type": "SHARES",
                 "id": str(share.id),
-                "file_name": share.file.original_name,
+                "file_name": share.file.original_name if share.file else (share.bundle.title or "Bulk Share Package"),
                 "recipient": share.recipient_email,
                 "status": "shared",
                 "sent_at": localtime(share.created_at),                
