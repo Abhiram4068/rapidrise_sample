@@ -129,7 +129,9 @@ class FileShareLink(models.Model):
         'File',
         on_delete=models.CASCADE,
         related_name='shares',
-        db_index=True
+        db_index=True,
+        null=True,
+        blank=True
     )
     owner=models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -163,11 +165,75 @@ class FileShareLink(models.Model):
     download_count = models.PositiveIntegerField(default=0)
     view_limit = models.PositiveIntegerField(null=True, blank=True)
     view_count = models.PositiveIntegerField(default=0)
+    bundle = models.ForeignKey(
+    'ShareBundle',
+    on_delete=models.CASCADE,
+    related_name='share_links',
+    null=True,
+    blank=True
+)
     def __str__(self):
         return f"{self.file} shared with {self.recipient_email}"
     class Meta:
         db_table = "file_share_links"
         ordering = ["-created_at"]
+
+class ShareBundle(models.Model):
+    owner = models.ForeignKey(User, on_delete=models.CASCADE)
+
+    share_token = models.CharField(max_length=255, unique=True)
+
+    title = models.CharField(max_length=500, blank=True)
+    message = models.TextField(blank=True)
+
+    permission = models.CharField(
+        max_length=30,
+        choices=[
+            ('view_only', 'View Only'),
+            ('view_download', 'View + Download'),
+            ('one_time_download', 'One Time Download'),
+            ('full_access', 'Full Access')
+        ],
+        default='view_only'
+    )
+
+    expiration_datetime = models.DateTimeField()
+
+    zip_file = models.FileField(upload_to='share_bundles/', null=True, blank=True)
+    download_count = models.PositiveIntegerField(default=0)
+    view_count = models.PositiveIntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+
+    download_limit = models.IntegerField(null=True, blank=True)
+    view_limit = models.IntegerField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class ShareBundleItem(models.Model):
+    bundle = models.ForeignKey(
+        ShareBundle,
+        related_name='items',
+        on_delete=models.CASCADE
+    )
+
+    file = models.ForeignKey(File, on_delete=models.CASCADE)
+
+
+class BundleRecipient(models.Model):
+    bundle = models.ForeignKey(
+        ShareBundle,
+        related_name='recipients',
+        on_delete=models.CASCADE
+    )
+
+    recipient_email = models.EmailField()
+
+    accessed = models.BooleanField(default=False)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
 
 
 class ScheduledMail(models.Model):

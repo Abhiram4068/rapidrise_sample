@@ -3,7 +3,8 @@ from files.views import (
     RegisterView, LoginView, TokenRefreshCookieView,DesignationListView, ChangePasswordView,LogoutView, ForgotPasswordView,ResetPasswordView,UserProfileView, FileUploadView, ChunkUploadView, ClearTrash, FileDownloadView, FileViewInlineView, FileListView, FileUpdateView, ArchiveFile, FileArchiveView, FileUnarchiveView,FileDetailView,FileDeleteView, FileShareCreateListUpdateView, PublicFileAccessView,
     CollectionListCreateView, CollectionDetailView, CollectionFileView, FileStarredList, CollectionStarredList, RecentView, FileShareScheduleCreateListView, FileShareScheduleCalendarView, RevokeScheduledMailView, ReportDownloadView, ArchiveDeleteFileView, StorageSummaryView, DashboardView, StorageManagementView, StoragePermanentDeleteView,
     DeactivateAccountView, ReactivationRequestView, ReactivationResolveView, BulkFileDeleteView, BulkFileArchiveView, BulkRestoreFileView, EmptyTrashView, BulkUnarchiveFileView,
-    DesignationChangeRequestView, DesignationChangeRequestResolveView
+    DesignationChangeRequestView, DesignationChangeRequestResolveView,
+    BulkFileShareView
     )
 from . import views
 """
@@ -60,6 +61,7 @@ urlpatterns=[
     path('files/<uuid:file_id>/share/', FileShareCreateListUpdateView.as_view(), name='share-create'),
     path('files/<uuid:share_id>/revoke/', FileShareCreateListUpdateView.as_view(), name='share-update'),
     path('files/shares/', FileShareCreateListUpdateView.as_view(), name='user-shares'),
+    path('files/bulk-share/', BulkFileShareView.as_view(), name='bulk-share'),
 
 
 

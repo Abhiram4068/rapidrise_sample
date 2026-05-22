@@ -37,6 +37,17 @@ def send_scheduled_share_email(self, scheduled_mail_id):
     scheduled_mail.save(update_fields=["status", "sent_at", "error_message"])
 
 
+@shared_task(bind=True, max_retries=3, default_retry_delay=60)
+def send_bulk_share_email(self, bundle_id):
+    from .services import FileShareService
+    try:
+        result = FileShareService.send_bulk_share_email(bundle_id)
+        if not result:
+            raise ValueError("Bulk share email could not be sent.")
+    except Exception as exc:
+        raise self.retry(exc=exc)
+
+
 @shared_task
 def auto_clear_trash():
     """
