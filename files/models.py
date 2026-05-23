@@ -119,6 +119,49 @@ class File(models.Model):
     def is_expired(self):
         return timezone.now() >= self.expires_at
 
+
+class ChunkUploadSession(models.Model):
+    """Tracks in-progress chunked uploads for pause, resume, and retry."""
+
+    class Status(models.TextChoices):
+        UPLOADING = "uploading", "Uploading"
+        PAUSED = "paused", "Paused"
+        COMPLETED = "completed", "Completed"
+        FAILED = "failed", "Failed"
+        CANCELLED = "cancelled", "Cancelled"
+
+    upload_id = models.CharField(max_length=128, unique=True, db_index=True)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="chunk_upload_sessions",
+    )
+    file_name = models.CharField(max_length=255)
+    file_size = models.BigIntegerField()
+    content_type = models.CharField(max_length=100)
+    total_chunks = models.PositiveIntegerField()
+    chunks_received = models.JSONField(default=list)
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.UPLOADING,
+    )
+    description = models.CharField(max_length=255, blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    expires_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "chunk_upload_sessions"
+        indexes = [
+            models.Index(fields=["user", "status"]),
+            models.Index(fields=["expires_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.upload_id} ({self.status})"
+
+
 class FileShareLink(models.Model):
     id=models.UUIDField(
         primary_key=True,

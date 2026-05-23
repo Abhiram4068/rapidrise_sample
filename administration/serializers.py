@@ -6,11 +6,11 @@ User = get_user_model()
 
 class AdminUserListSerializer(serializers.ModelSerializer):
     total_files_uploaded = serializers.SerializerMethodField()
-
+    designation_display = serializers.SerializerMethodField()
     class Meta:
         model = User
         fields = [
-            'id', 'email', 'first_name', 'last_name', 'designation', 
+            'id', 'email', 'first_name', 'last_name', 'designation_display', 
             'account_status', 'is_staff', 'is_superuser', 'is_active', 
             'storage_limit_bytes', 'storage_used_bytes', 'date_joined',
             'last_login', 'total_files_uploaded'
@@ -18,6 +18,9 @@ class AdminUserListSerializer(serializers.ModelSerializer):
 
     def get_total_files_uploaded(self, obj):
         return obj.files.filter(is_deleted=False).count()
+
+    def get_designation_display(self, obj):
+        return obj.get_designation_display()
 
 
 from .models import Designation

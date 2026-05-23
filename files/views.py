@@ -11,19 +11,19 @@ from rest_framework_simplejwt.exceptions import TokenError
 from django.http import FileResponse
 from django.core.exceptions import ValidationError, PermissionDenied
 from files.serializers import (
-    RegisterSerializer, LoginSerializer, UserProfileSerializer,ChangePasswordSerialzier, DeactivateAccountSerializer, FileUploadSerialzier, FilesListSerializer, FileUpdateSerializer ,FileShareSerializer, FileShareCreateSerializer, PublicFileSerializer,CollectionSerializer, CollectionFileSerializer
+    RegisterSerializer, LoginSerializer, UserProfileSerializer,ChangePasswordSerialzier, DeactivateAccountSerializer, ChunkUploadSerializer, ChunkUploadStatusQuerySerializer, ChunkUploadControlSerializer, FilesListSerializer, FileUpdateSerializer ,FileShareSerializer, FileShareCreateSerializer, PublicFileSerializer,CollectionSerializer, CollectionFileSerializer
     ,ScheduledMailSerializer, FileShareListSerializer, ReportQuerySerializer, DesignationSerializer, ResetPasswordSerializer, ForgotPasswordSerializer, ReactivationRequestSerializer, DesignationChangeRequestListSerializer, DesignationChangeRequestCreateSerializer, DesignationChangeRequestAdminSerializer
     )
-from files.models import ReactivationRequest, DesignationChangeRequest
+from files.models import ReactivationRequest, DesignationChangeRequest, ChunkUploadSession
 from files.services import (
-    create_user, get_designation, authenticate_and_generate_token, AuthenticationError ,AuthService, UserProfileService, FileService, FileShareService, ViewFileShareService, CollectionService, ReportService, AccountService
+    create_user, get_designation, authenticate_and_generate_token, AuthenticationError ,AuthService, UserProfileService, FileService, ChunkUploadService, FileShareService, ViewFileShareService, CollectionService, ReportService, AccountService
     )
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.exceptions import NotFound, ValidationError as DRFValidationError
 from files.authentication import CookieJWTAuthentication
 from files.exceptions import StorageLimitExceeded
 from django.db.models import F, Sum, Q
-
+from rest_framework import serializers
 import logging
 logger = logging.getLogger(__name__)
 
@@ -423,129 +423,225 @@ class ChunkUploadView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        upload_id = request.data.get("upload_id")
-        chunk_index = request.data.get("chunk_index")
-        total_chunks = request.data.get("total_chunks")
-        file_name = request.data.get("file_name")
-        file_size = request.data.get("file_size")
-        content_type = request.data.get("content_type")
-        file_chunk = request.FILES.get("file")
+        payload = {
+            "upload_id":    request.data.get("upload_id"),
+            "chunk_index":  request.data.get("chunk_index"),
+            "total_chunks": request.data.get("total_chunks"),
+            "file_name":    request.data.get("file_name"),
+            "file_size":    request.data.get("file_size"),
+            "content_type": request.data.get("content_type"),
+            "file":         request.FILES.get("file"),
+        }
         action = request.data.get("action")
+        if action is not None and action != "":
+            payload["action"] = action
         description = request.data.get("description")
+        if description is not None and description != "":
+            payload["description"] = description
 
-        if not all([upload_id, chunk_index, total_chunks, file_chunk]):
-            return Response({"error": "Missing required chunk parameters"}, status=status.HTTP_400_BAD_REQUEST)
+        serializer = ChunkUploadSerializer(data=payload)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        data = serializer.validated_data
+        upload_id = data["upload_id"]
+        chunk_index = data["chunk_index"]
+        total_chunks = data["total_chunks"]
 
         try:
-            # 0. Pre-check storage for the first chunk
-            if str(chunk_index) == "0":
-                max_storage = 1 * 1024 * 1024 * 1024
-                request.user.refresh_from_db()
-                current_usage = request.user.storage_used_bytes
-                if int(file_size) + current_usage > max_storage:
-                    available = max_storage - current_usage
-                    mb = 1024 * 1024
-                    gb = 1024 * 1024 * 1024
-                    if available < mb:
-                        avail_str = f"{available / 1024:.2f} KB"
-                    elif available < gb:
-                        avail_str = f"{available / mb:.2f} MB"
-                    else:
-                        avail_str = f"{available / gb:.2f} GB"
-                    raise DRFValidationError({"error": f"Insufficient storage space. Only {avail_str} left. Try deleting some files!"})
+            session = ChunkUploadService.get_or_create_session(
+                user=request.user,
+                upload_id=upload_id,
+                file_name=data["file_name"],
+                file_size=data["file_size"],
+                content_type=data["content_type"],
+                total_chunks=total_chunks,
+                description=data.get("description"),
+            )
 
-            # 1. Store chunk
-            FileService.store_chunk(upload_id, chunk_index, file_chunk)
-             
-            # 2. If it's the last chunk, assemble it
-            if int(chunk_index) == int(total_chunks) - 1:
+            if session.status == ChunkUploadSession.Status.CANCELLED:
+                return Response(
+                    {"error": "This upload was cancelled. Start a new upload."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if session.status == ChunkUploadSession.Status.COMPLETED:
+                return Response(
+                    {"error": "This upload is already completed."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            session = ChunkUploadService.sync_session_from_disk(session)
+            already_uploaded = chunk_index in (session.chunks_received or [])
+
+            # Storage quota check only when starting a new upload (no chunks yet)
+            if chunk_index == 0 and not session.chunks_received:
+                request.user.refresh_from_db()
+                try:
+                    serializer.validate_storage(request.user)
+                except serializers.ValidationError as e:
+                    return Response(e.detail, status=status.HTTP_409_CONFLICT)
+
+            if not already_uploaded:
+                save_result = ChunkUploadService.save_chunk_file(
+                    upload_id, chunk_index, data["file"]
+                )
+                if not save_result.get("skipped"):
+                    session = ChunkUploadService.mark_chunk_received(session, chunk_index)
+            else:
+                session = ChunkUploadService.sync_session_from_disk(session)
+
+            progress = ChunkUploadService.progress_payload(
+                session,
+                extra={
+                    "chunk_index": chunk_index,
+                    "already_uploaded": already_uploaded,
+                    "message": f"Chunk {chunk_index} received",
+                },
+            )
+
+            all_chunks_ready = len(session.chunks_received or []) >= total_chunks
+            is_last_chunk = chunk_index == total_chunks - 1
+
+            if is_last_chunk and all_chunks_ready:
                 result = FileService.complete_chunk_upload(
                     user=request.user,
                     upload_id=upload_id,
                     total_chunks=total_chunks,
-                    file_name=file_name,
-                    file_size=file_size,
-                    content_type=content_type,
-                    description=description,
-                    action=action
+                    file_name=data["file_name"],
+                    file_size=data["file_size"],
+                    content_type=data["content_type"],
+                    description=data.get("description"),
+                    action=data.get("action"),
                 )
-                return Response({
-                    "message": "File uploaded successfully",
-                    "file": result
-                }, status=status.HTTP_201_CREATED)
-            
-            # Otherwise, just acknowledge chunk
-            return Response({"message": f"Chunk {chunk_index} uploaded successfully"}, status=status.HTTP_200_OK)
+                progress["status"] = ChunkUploadSession.Status.COMPLETED
+                progress["progress_percent"] = 100
+                return Response(
+                    {
+                        "message": "File uploaded successfully",
+                        "file": result,
+                        **progress,
+                    },
+                    status=status.HTTP_201_CREATED,
+                )
+
+            return Response(progress, status=status.HTTP_200_OK)
 
         except DRFValidationError as e:
             detail = e.detail
             if isinstance(detail, dict):
-                detail = {k: v[0] if isinstance(v, list) and len(v) == 1 else v for k, v in detail.items()}
-            logger.warning(f"Validation error during chunk upload | detail={detail}")
+                detail = {
+                    k: v[0] if isinstance(v, list) and len(v) == 1 else v
+                    for k, v in detail.items()
+                }
+            logger.warning(f"Chunk upload validation error | detail={detail}")
             return Response(detail, status=status.HTTP_409_CONFLICT)
         except StorageLimitExceeded as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
-            logger.error(f"Unexpected error during chunk upload | error={str(e)}")
-            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            logger.error(f"Unexpected chunk upload error | error={str(e)}")
+            return Response({"error": "An unexpected error occurred."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-class FileUploadView(APIView):
+
+class ChunkUploadStatusView(APIView):
+    """GET upload progress and which chunks are already on the server."""
     permission_classes = [IsAuthenticated]
 
-    def post(self, request):
-        start_time = time.time()
-        logger.info(f"File upload request started | user_id={request.user.id}")
-
-        serializer = FileUploadSerialzier(
-            data=request.data,
-            context={'request': request}
+    def get(self, request):
+        serializer = ChunkUploadStatusQuerySerializer(
+            data={"upload_id": request.query_params.get("upload_id")}
         )
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        files = serializer.validated_data['files']
-        action = request.data.get("action")
+        try:
+            progress = ChunkUploadService.get_status(
+                request.user, serializer.validated_data["upload_id"]
+            )
+            return Response(progress, status=status.HTTP_200_OK)
+        except DRFValidationError as e:
+            return Response(e.detail, status=status.HTTP_404_NOT_FOUND)
+
+
+class ChunkUploadControlView(APIView):
+    """POST pause, resume, or cancel an in-progress upload."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = ChunkUploadControlSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        upload_id = serializer.validated_data["upload_id"]
+        action = serializer.validated_data["action"]
 
         try:
-            logger.info(f"{len(files)} files received for upload | user_id={request.user.id}")
-            result = FileService.upload_files(
-                user=request.user, 
-                files=files, 
-                action=action, 
-                description=request.data.get("description")
-            )
-            
-            uploaded_count = len(result["uploaded"])
-            failed_count = len(result["failed"])
-            
-            duration = time.time() - start_time
-            logger.info(
-                f"File upload cycle complete | user_id={request.user.id} | "
-                f"success={uploaded_count} | failed={failed_count} | duration={duration:.2f}s"
-            )
+            if action == "pause":
+                result = ChunkUploadService.pause_session(request.user, upload_id)
+            elif action == "resume":
+                result = ChunkUploadService.resume_session(request.user, upload_id)
+            else:
+                result = ChunkUploadService.cancel_session(request.user, upload_id)
+            return Response(result, status=status.HTTP_200_OK)
+        except DRFValidationError as e:
+            return Response(e.detail, status=status.HTTP_404_NOT_FOUND)
 
-            # If everything failed, might want a different status code, but 207 Multi-Status or 201 with failed list is common
-            status_code = status.HTTP_201_CREATED if uploaded_count > 0 else status.HTTP_400_BAD_REQUEST
+# class FileUploadView(APIView):
+#     permission_classes = [IsAuthenticated]
+
+#     def post(self, request):
+#         start_time = time.time()
+#         logger.info(f"File upload request started | user_id={request.user.id}")
+
+#         serializer = FileUploadSerialzier(
+#             data=request.data,
+#             context={'request': request}
+#         )
+#         if not serializer.is_valid():
+#             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+#         files = serializer.validated_data['files']
+#         action = request.data.get("action")
+
+#         try:
+#             logger.info(f"{len(files)} files received for upload | user_id={request.user.id}")
+#             result = FileService.upload_files(
+#                 user=request.user, 
+#                 files=files, 
+#                 action=action, 
+#                 description=request.data.get("description")
+#             )
             
-            return Response(
-                {
-                    'message': f'{uploaded_count} file(s) uploaded, {failed_count} failed',
-                    'uploaded': result["uploaded"],
-                    'failed': result["failed"]
-                },
-                status=status_code
-            )
+#             uploaded_count = len(result["uploaded"])
+#             failed_count = len(result["failed"])
+            
+#             duration = time.time() - start_time
+#             logger.info(
+#                 f"File upload cycle complete | user_id={request.user.id} | "
+#                 f"success={uploaded_count} | failed={failed_count} | duration={duration:.2f}s"
+#             )
 
-        except ValidationError as e:
-            detail = e.detail
-            if isinstance(detail, dict):
-                detail = {k: v[0] if isinstance(v, list) and len(v) == 1 else v for k, v in detail.items()}
-            logger.warning(f"Validation error during upload | user_id={request.user.id} | detail={detail}")
-            return Response(detail, status=status.HTTP_409_CONFLICT)
+#             # If everything failed, might want a different status code, but 207 Multi-Status or 201 with failed list is common
+#             status_code = status.HTTP_201_CREATED if uploaded_count > 0 else status.HTTP_400_BAD_REQUEST
+            
+#             return Response(
+#                 {
+#                     'message': f'{uploaded_count} file(s) uploaded, {failed_count} failed',
+#                     'uploaded': result["uploaded"],
+#                     'failed': result["failed"]
+#                 },
+#                 status=status_code
+#             )
 
-        except Exception as e:
-            logger.error(f"Unexpected error during file upload | user_id={request.user.id} | error={str(e)}")
-            return Response({'error': 'An unexpected error occurred during upload.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+#         except ValidationError as e:
+#             detail = e.detail
+#             if isinstance(detail, dict):
+#                 detail = {k: v[0] if isinstance(v, list) and len(v) == 1 else v for k, v in detail.items()}
+#             logger.warning(f"Validation error during upload | user_id={request.user.id} | detail={detail}")
+#             return Response(detail, status=status.HTTP_409_CONFLICT)
+
+#         except Exception as e:
+#             logger.error(f"Unexpected error during file upload | user_id={request.user.id} | error={str(e)}")
+#             return Response({'error': 'An unexpected error occurred during upload.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 class FileDownloadView(APIView):
     permission_classes=[IsAuthenticated]
     def get(self, request, file_id):
@@ -1204,12 +1300,57 @@ class PublicFileAccessView(APIView):
     permission_classes = []
 
     def get(self, request, token):
+        from django.http import Http404
         try:
             share = ViewFileShareService.get_share_or_404(token)
+        except Http404:
+            return Response({'error': 'Share link not found or deleted.'}, status=status.HTTP_404_NOT_FOUND)
         except ValueError as e:
-            return Response({'error': str(e)}, status=status.HTTP_403_FORBIDDEN)
+            error_msg = str(e)
+            status_code = status.HTTP_403_FORBIDDEN
+            if 'expired' in error_msg.lower():
+                status_code = status.HTTP_410_GONE
+            return Response({'error': error_msg}, status=status_code)
 
-        ViewFileShareService.increment_access_counts(share)
+        action = request.query_params.get('action')
+        if not action:
+            # Return JSON metadata for initial verification & rendering
+            owner = share.owner
+            sender_name = owner.get_full_name() or owner.email
+            sender_email = owner.email
+
+            is_bundle = getattr(share, 'is_bundle', False)
+            if not is_bundle and hasattr(share, 'file') and share.file:
+                file_name = share.file.original_name
+                file_size = share.file.file_size
+                content_type = share.file.content_type
+                accessed = getattr(share, 'accessed', False)
+            else:
+                bundle_obj = getattr(share, 'bundle', None) or share
+                file_name = getattr(bundle_obj, 'title', '') or "Bulk Share Package"
+                file_size = sum(item.file.file_size for item in bundle_obj.items.all()) if hasattr(bundle_obj, 'items') else 0
+                content_type = "application/zip"
+                accessed = getattr(share, 'accessed', False) if not isinstance(share, ShareBundle) else (share.download_count > 0)
+
+            return Response({
+                'file_name': file_name,
+                'file_size': file_size,
+                'content_type': content_type,
+                'sender': sender_name,
+                'sender_name': sender_name,
+                'sender_email': sender_email,
+                'expiration': share.expiration_datetime,
+                'expiration_datetime': share.expiration_datetime,
+                'permission': share.permission,
+                'accessed': accessed,
+                'view_limit': share.view_limit,
+                'view_count': share.view_count,
+                'download_limit': share.download_limit,
+                'download_count': share.download_count,
+            }, status=status.HTTP_200_OK)
+
+        # Increment access count and return file only when action is requested
+        ViewFileShareService.increment_access_counts(share, action)
         
         if share.is_bundle:
             file_obj, filename = ViewFileShareService.get_zip_response(share)
