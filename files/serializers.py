@@ -262,6 +262,7 @@ ALLOWED_CONTENT_TYPES = {
     "text/csv",
     "image/jpeg",
     "image/png",
+    "application/pdf",
     "image/webp",
     "application/zip",
     "application/x-zip-compressed",
