@@ -16,7 +16,7 @@ from files.serializers import (
     )
 from files.models import ReactivationRequest, DesignationChangeRequest, ChunkUploadSession
 from files.services import (
-    create_user, get_designation, authenticate_and_generate_token, AuthenticationError ,AuthService, UserProfileService, FileService, ChunkUploadService, FileShareService, ViewFileShareService, CollectionService, ReportService, AccountService
+    create_user, authenticate_and_generate_token, AuthenticationError ,AuthService, UserProfileService, FileService, ChunkUploadService, FileShareService, ViewFileShareService, CollectionService, ReportService, AccountService
     )
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.exceptions import NotFound, ValidationError as DRFValidationError
@@ -354,39 +354,6 @@ class DesignationChangeRequestView(APIView):
         out = DesignationChangeRequestListSerializer(request_obj)
         return Response(out.data, status=status.HTTP_201_CREATED)
 
-
-
- 
-class DesignationChangeRequestResolveView(APIView):
-    """
-    GET   /api/designation-change/admin/               — list all requests (admin only)
-    PATCH /api/designation-change/admin/<pk>/resolve/  — approve or reject (admin only)
- 
-    PATCH body: { "status": "approved" | "rejected", "admin_note": "optional" }
-    """
-    permission_classes = [IsAdminUser]
- 
-    def get(self, request):
-        status_filter = request.query_params.get("status")
-        requests = UserProfileService.get_all_designation_requests(status_filter=status_filter)
-        serializer = DesignationChangeRequestAdminSerializer(requests, many=True)
-        return Response(serializer.data)
- 
-    def patch(self, request, pk):
-        try:
-            request_obj = UserProfileService.resolve_designation_request(
-                pk=pk,
-                new_status=request.data.get("status"),
-                admin_note=request.data.get("admin_note", ""),
-                resolved_by=request.user,
-            )
-        except DesignationChangeRequest.DoesNotExist:
-            return Response({"detail": "Request not found."}, status=status.HTTP_404_NOT_FOUND)
-        except ValueError as e:
-            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
- 
-        serializer = DesignationChangeRequestAdminSerializer(request_obj)
-        return Response(serializer.data)
 
 import time
 from rest_framework.exceptions import ValidationError

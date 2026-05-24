@@ -3,7 +3,7 @@ from files.views import (
     RegisterView, LoginView, TokenRefreshCookieView,DesignationListView, ChangePasswordView,LogoutView, ForgotPasswordView,ResetPasswordView,UserProfileView, ChunkUploadView, ChunkUploadStatusView, ChunkUploadControlView, ClearTrash, FileDownloadView, FileViewInlineView, FileListView, FileUpdateView, ArchiveFile, FileArchiveView, FileUnarchiveView,FileDetailView,FileDeleteView, FileShareCreateListUpdateView, PublicFileAccessView,
     CollectionListCreateView, CollectionDetailView, CollectionFileView, FileStarredList, CollectionStarredList, RecentView, FileShareScheduleCreateListView, FileShareScheduleCalendarView, RevokeScheduledMailView, ReportDownloadView, ArchiveDeleteFileView, StorageSummaryView, DashboardView, StorageManagementView, StoragePermanentDeleteView,
     DeactivateAccountView, ReactivationRequestView, BulkFileDeleteView, BulkFileArchiveView, BulkRestoreFileView, EmptyTrashView, BulkUnarchiveFileView,
-    DesignationChangeRequestView, DesignationChangeRequestResolveView,
+    DesignationChangeRequestView,
     BulkFileShareView
     )
 from . import views
@@ -26,8 +26,6 @@ urlpatterns=[
     path('auth/deactivate/', DeactivateAccountView.as_view(), name='deactivate_account'),
     path('auth/reactivation-request/', ReactivationRequestView.as_view(), name='reactivation_request'),
     path("designation-change/", DesignationChangeRequestView.as_view(), name="designation-change"),
-    path("designation-change/admin/", DesignationChangeRequestResolveView.as_view(), name="designation-change-admin"),
-    path("designation-change/admin/<int:pk>/resolve/", DesignationChangeRequestResolveView.as_view(), name="designation-change-resolve"),
     #password change
     path("auth/change-password/",ChangePasswordView.as_view(), name="change-password" ),
     #file download urls

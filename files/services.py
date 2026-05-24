@@ -83,13 +83,6 @@ def authenticate_and_generate_token(email:str, password:str)->dict:
         }
     }
 
-def get_designation():
-    return [
-        {"value": key, "label": label}
-        for key, label in User.DesignationChoices.choices
-    ]
-
-
 class DesignationListService:
     @staticmethod
     def get_active_designations():
@@ -249,18 +242,24 @@ class UserProfileService:
         return DesignationChangeRequest.objects.filter(user=user)
  
     @staticmethod
-    def create_designation_request(user: User, requested_designation: str) -> DesignationChangeRequest:
+    def create_designation_request(user: User, requested_designation) -> DesignationChangeRequest:
         """
         Submit a new designation change request.
-        Raises ValueError if:
-          - requested_designation is the same as the current one
-          - the user already has a PENDING request
+        `requested_designation` is an administration.Designation instance or pk.
         """
-        if requested_designation == user.designation:
+        from administration.models import Designation
+
+        if not isinstance(requested_designation, Designation):
+            requested_designation = Designation.objects.get(pk=requested_designation)
+
+        if user.designation_id == requested_designation.pk:
             raise ValueError(
                 "Requested designation must be different from your current designation."
             )
- 
+
+        if not user.designation_id:
+            raise ValueError("Your account has no current designation assigned.")
+
         if DesignationChangeRequest.objects.filter(
             user=user,
             status=DesignationChangeRequest.StatusChoices.PENDING
@@ -269,63 +268,13 @@ class UserProfileService:
                 "You already have a pending designation change request. "
                 "Please wait for it to be resolved before submitting a new one."
             )
- 
+
         return DesignationChangeRequest.objects.create(
             user=user,
             current_designation=user.designation,
             requested_designation=requested_designation,
             status=DesignationChangeRequest.StatusChoices.PENDING,
         )
- 
-    @staticmethod
-    def get_all_designation_requests(status_filter: str = None):
-        """
-        Return all designation change requests (admin use).
-        Optionally filter by status string e.g. 'pending'.
-        """
-        qs = DesignationChangeRequest.objects.select_related("user").all()
-        if status_filter:
-            qs = qs.filter(status=status_filter)
-        return qs
- 
-    @staticmethod
-    def resolve_designation_request(
-        pk,
-        new_status: str,
-        admin_note: str,
-        resolved_by: User
-    ) -> DesignationChangeRequest:
-        """
-        Approve or reject a pending designation change request.
-        - On approval the user's designation is updated immediately.
-        Raises:
-          - DesignationChangeRequest.DoesNotExist if pk not found
-          - ValueError for invalid status or already-resolved request
-        """
-        valid_statuses = (
-            DesignationChangeRequest.StatusChoices.APPROVED,
-            DesignationChangeRequest.StatusChoices.REJECTED,
-        )
-        if new_status not in valid_statuses:
-            raise ValueError("status must be 'approved' or 'rejected'.")
- 
-        req_obj = DesignationChangeRequest.objects.select_related("user").get(pk=pk)
- 
-        if req_obj.status != DesignationChangeRequest.StatusChoices.PENDING:
-            raise ValueError("This request has already been resolved.")
- 
-        req_obj.status      = new_status
-        req_obj.admin_note  = admin_note or ""
-        req_obj.resolved_at = timezone.now()
-        req_obj.resolved_by = resolved_by
-        req_obj.save()
- 
-        if new_status == DesignationChangeRequest.StatusChoices.APPROVED:
-            user = req_obj.user
-            user.designation = req_obj.requested_designation
-            user.save(update_fields=["designation"])
- 
-        return req_obj
 
 class StorageService:
     """

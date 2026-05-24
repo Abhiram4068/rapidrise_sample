@@ -12,6 +12,11 @@ class RegisterSerializer(serializers.ModelSerializer):
     confirm_password=serializers.CharField(write_only=True, min_length=8)
     date_of_birth = serializers.DateField(required=False, allow_null=True)
     email = serializers.EmailField()
+    designation = serializers.PrimaryKeyRelatedField(
+        queryset=Designation.objects.all(),
+        required=True,
+    )
+
     class Meta:
         model=User
         fields=[
@@ -19,6 +24,7 @@ class RegisterSerializer(serializers.ModelSerializer):
             'first_name',
             'last_name',
             'date_of_birth',
+            'designation',
             'password',
             'confirm_password'
         ]
@@ -93,7 +99,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = User
-        fields = ["id", "email", "first_name", "last_name", "designation", "date_joined", "total_files", "date_of_birth", "status", "account_status", "storage_used_bytes", "has_pending_reactivation_request", "is_staff", "is_superuser"]
+        fields = ["id", "email", "first_name", "last_name", "designation", "designation_id", "date_joined", "total_files", "date_of_birth", "status", "account_status", "storage_used_bytes", "has_pending_reactivation_request", "is_staff", "is_superuser"]
         read_only_fields = fields
 
     def get_date_joined(self, obj):
@@ -106,7 +112,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
         return ReactivationRequest.objects.filter(user=obj, is_resolved=False).exists()
 
     def get_designation(self, obj):
-        return obj.get_designation_display()
+        return obj.designation.name if obj.designation_id else None
 
     def get_storage_used_bytes(self, obj):
         return obj.storage_used_bytes
@@ -136,8 +142,8 @@ class DesignationChangeRequestAdminSerializer(serializers.ModelSerializer):
     """
     user_email     = serializers.EmailField(source="user.email",      read_only=True)
     user_full_name = serializers.SerializerMethodField()
-    current_designation_display   = serializers.CharField(source="get_current_designation_display",   read_only=True)
-    requested_designation_display = serializers.CharField(source="get_requested_designation_display", read_only=True)
+    current_designation_display   = serializers.CharField(source="current_designation.name", read_only=True)
+    requested_designation_display = serializers.CharField(source="requested_designation.name", read_only=True)
  
     class Meta:
         model  = DesignationChangeRequest
@@ -168,8 +174,12 @@ class DesignationChangeRequestAdminSerializer(serializers.ModelSerializer):
 class DesignationChangeRequestCreateSerializer(serializers.ModelSerializer):
     """
     Used by the user to submit a new designation change request.
-    Only `requested_designation` is writable — everything else is set server-side.
+    `requested_designation` is the administration.Designation primary key (e.g. AJNW).
     """
+    requested_designation = serializers.PrimaryKeyRelatedField(
+        queryset=Designation.objects.all(),
+    )
+
     class Meta:
         model  = DesignationChangeRequest
         fields = ["id", "requested_designation", "status", "created_at"]
@@ -177,7 +187,11 @@ class DesignationChangeRequestCreateSerializer(serializers.ModelSerializer):
  
     def validate_requested_designation(self, value):
         user = self.context["request"].user
-        if value == user.designation:
+        if not user.designation_id:
+            raise serializers.ValidationError(
+                "Your account has no current designation assigned."
+            )
+        if value.pk == user.designation_id:
             raise serializers.ValidationError(
                 "Requested designation must be different from your current designation."
             )
@@ -185,7 +199,6 @@ class DesignationChangeRequestCreateSerializer(serializers.ModelSerializer):
  
     def validate(self, attrs):
         user = self.context["request"].user
-        # Block if a pending request already exists
         if DesignationChangeRequest.objects.filter(
             user=user, status=DesignationChangeRequest.StatusChoices.PENDING
         ).exists():
@@ -195,19 +208,13 @@ class DesignationChangeRequestCreateSerializer(serializers.ModelSerializer):
             )
         return attrs
  
-    def create(self, validated_data):
-        user = self.context["request"].user
-        validated_data["user"] = user
-        validated_data["current_designation"] = user.designation
-        return super().create(validated_data)
- 
  
 class DesignationChangeRequestListSerializer(serializers.ModelSerializer):
     """
     Used by the user to list their own past requests.
     """
-    current_designation_display   = serializers.CharField(source="get_current_designation_display",   read_only=True)
-    requested_designation_display = serializers.CharField(source="get_requested_designation_display", read_only=True)
+    current_designation_display   = serializers.CharField(source="current_designation.name", read_only=True)
+    requested_designation_display = serializers.CharField(source="requested_designation.name", read_only=True)
  
     class Meta:
         model  = DesignationChangeRequest
@@ -227,7 +234,10 @@ class ReactivationRequestSerializer(serializers.ModelSerializer):
     user_id = serializers.IntegerField(source='user.id', read_only=True)
     user_email = serializers.EmailField(source='user.email', read_only=True)
     user_full_name = serializers.SerializerMethodField()
-    designation = serializers.CharField(source='user.designation', read_only=True)
+    designation = serializers.SerializerMethodField()
+
+    def get_designation(self, obj):
+        return obj.user.designation.name if obj.user.designation_id else None
 
     class Meta:
         model = ReactivationRequest

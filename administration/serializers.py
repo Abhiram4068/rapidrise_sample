@@ -20,7 +20,7 @@ class AdminUserListSerializer(serializers.ModelSerializer):
         return obj.files.filter(is_deleted=False).count()
 
     def get_designation_display(self, obj):
-        return obj.get_designation_display()
+        return obj.designation.name if obj.designation_id else ""
 
 
 from .models import Designation
@@ -46,8 +46,8 @@ class DesignationSerializer(serializers.ModelSerializer):
 class DesignationChangeRequestSerializer(serializers.ModelSerializer):
     user_email = serializers.EmailField(source='user.email', read_only=True)
     user_full_name = serializers.SerializerMethodField()
-    current_designation_display = serializers.CharField(source='get_current_designation_display', read_only=True)
-    requested_designation_display = serializers.CharField(source='get_requested_designation_display', read_only=True)
+    current_designation_display = serializers.CharField(source='current_designation.name', read_only=True)
+    requested_designation_display = serializers.CharField(source='requested_designation.name', read_only=True)
     resolved_by_email = serializers.EmailField(source='resolved_by.email', read_only=True)
 
     class Meta:
