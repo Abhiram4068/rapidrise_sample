@@ -2255,11 +2255,44 @@ class ThreadService:
         )
         stages = ProjectStage.objects.filter(thread_id=thread_id)
         return {"nodes": nodes, "edges": edges, "stages": stages}
+
+
+class StageService:
+
+    @staticmethod
+    def delete_stage(stage: ProjectStage, user) -> str:
+        """Delete a stage if it has no active nodes. Returns the stage name."""
+        node_count = ProjectNode.objects.filter(stage=stage, is_deleted=False).count()
+        if node_count > 0:
+            raise DRFValidationError(
+                {
+                    "detail": (
+                        f'Cannot delete stage "{stage.name}" because it still contains '
+                        f"{node_count} active node(s). Move or archive those nodes first."
+                    )
+                }
+            )
+        name = stage.name
+        stage.delete()
+        return name
  
  
 # ─── Node ─────────────────────────────────────────────────────────────────────
  
 class NodeService:
+
+    @staticmethod
+    def is_root_node(node: ProjectNode) -> bool:
+        """Root node: auto-created with the thread (first node), or id matches thread id."""
+        if node.id == node.thread_id:
+            return True
+        root_id = (
+            ProjectNode.objects.filter(thread_id=node.thread_id, is_deleted=False)
+            .order_by("created_at", "id")
+            .values_list("id", flat=True)
+            .first()
+        )
+        return root_id == node.id
  
     @staticmethod
     def add_node(thread: ProjectThread, user, validated_data: dict) -> ProjectNode:
@@ -2344,6 +2377,11 @@ class NodeService:
     @staticmethod
     def soft_delete(node: ProjectNode, user):
         """Archive instead of hard-delete; mark all downstream nodes as BLOCKED."""
+        if NodeService.is_root_node(node):
+            raise DRFValidationError(
+                {"detail": "The root node cannot be deleted. It is required for this thread."}
+            )
+
         with transaction.atomic():
             node.is_deleted = True
             node.status = ProjectNode.Status.ARCHIVED

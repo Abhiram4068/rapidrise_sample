@@ -16,7 +16,7 @@ from files.serializers import (
     )
 from files.models import ReactivationRequest, DesignationChangeRequest, ChunkUploadSession
 from files.services import (
-    create_user, authenticate_and_generate_token, AuthenticationError ,AuthService, UserProfileService, FileService, ChunkUploadService, FileShareService, ViewFileShareService, CollectionService, ReportService, AccountService
+    create_user, authenticate_and_generate_token, AuthenticationError ,AuthService, UserProfileService, FileService, ChunkUploadService, FileShareService, ViewFileShareService, CollectionService, ReportService, AccountService, ThreadService, StageService, NodeService, DependencyService
     )
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.exceptions import NotFound, ValidationError as DRFValidationError
@@ -1665,7 +1665,7 @@ from .serializers import (
     ThreadSerializer,
     ProjectStageSerializer,
 )
-from .services import DependencyService, FileService, NodeService, ThreadService
+from .services import DependencyService, FileService, NodeService, ThreadService, StageService
 
 
 # ─── Thread ───────────────────────────────────────────────────────────────────
@@ -1755,7 +1755,9 @@ class ThreadStageListCreateView(APIView):
         serializer = ProjectStageSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         stage = serializer.save(thread=thread)
-        return Response(ProjectStageSerializer(stage).data, status=status.HTTP_201_CREATED)
+        data = ProjectStageSerializer(stage).data
+        data["detail"] = f'Stage "{stage.name}" created successfully.'
+        return Response(data, status=status.HTTP_201_CREATED)
 
 
 class ThreadStageDetailView(APIView):
@@ -1774,16 +1776,28 @@ class ThreadStageDetailView(APIView):
         
         serializer = ProjectStageSerializer(stage, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
-        serializer.save()
-        return Response(serializer.data)
+        stage = serializer.save()
+        data = serializer.data
+        data["detail"] = f'Stage "{stage.name}" renamed successfully.'
+        return Response(data)
 
     def delete(self, request, pk):
         stage = self._get_stage(pk, request.user)
         if not stage:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
-            
-        stage.delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
+
+        try:
+            name = StageService.delete_stage(stage, request.user)
+        except DRFValidationError as e:
+            detail = e.detail.get("detail") if isinstance(e.detail, dict) else e.detail
+            if isinstance(detail, list):
+                detail = detail[0]
+            return Response({"detail": detail}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(
+            {"detail": f'Stage "{name}" deleted successfully.'},
+            status=status.HTTP_200_OK,
+        )
 
 
 # ─── Node ─────────────────────────────────────────────────────────────────────
@@ -1811,7 +1825,9 @@ class NodeListCreateView(APIView):
         serializer = NodeCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         node = NodeService.add_node(thread, request.user, serializer.validated_data)
-        return Response(NodeSerializer(node).data, status=status.HTTP_201_CREATED)
+        data = NodeSerializer(node).data
+        data["detail"] = f'Node "{node.title}" created successfully.'
+        return Response(data, status=status.HTTP_201_CREATED)
 
 
 class NodeDetailView(APIView):
@@ -1836,14 +1852,25 @@ class NodeDetailView(APIView):
         serializer = NodeUpdateSerializer(data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         node = NodeService.update_node(node, request.user, serializer.validated_data)
-        return Response(NodeSerializer(node).data)
+        data = NodeSerializer(node).data
+        data["detail"] = f'Node "{node.title}" updated successfully.'
+        return Response(data)
 
     def delete(self, request, pk):
         node = self._get_node(pk, request.user)
         if not node:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
-        NodeService.soft_delete(node, request.user)
-        return Response({"detail": "Node archived."}, status=status.HTTP_200_OK)
+        try:
+            NodeService.soft_delete(node, request.user)
+        except DRFValidationError as e:
+            detail = e.detail.get("detail") if isinstance(e.detail, dict) else e.detail
+            if isinstance(detail, list):
+                detail = detail[0]
+            return Response({"detail": detail}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(
+            {"detail": f'Node "{node.title}" archived successfully.'},
+            status=status.HTTP_200_OK,
+        )
 
 
 class NodeBranchView(APIView):
@@ -1922,7 +1949,9 @@ class DependencyListCreateView(APIView):
         except Exception as e:
              return Response({"detail": f"Dependency error: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
 
-        return Response(DependencySerializer(dep).data, status=status.HTTP_201_CREATED)
+        data = DependencySerializer(dep).data
+        data["detail"] = "Connection created successfully."
+        return Response(data, status=status.HTTP_201_CREATED)
 
 
 class DependencyDetailView(APIView):
@@ -1946,7 +1975,9 @@ class DependencyDetailView(APIView):
         except Exception as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
             
-        return Response(DependencySerializer(dep).data)
+        data = DependencySerializer(dep).data
+        data["detail"] = "Connection updated successfully."
+        return Response(data)
 
     def delete(self, request, pk):
         try:
@@ -1954,7 +1985,7 @@ class DependencyDetailView(APIView):
         except NodeDependency.DoesNotExist:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
         DependencyService.remove_dependency(dep, request.user)
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        return Response({"detail": "Connection removed successfully."}, status=status.HTTP_200_OK)
 
 
 # ─── Files ────────────────────────────────────────────────────────────────────
@@ -1979,10 +2010,9 @@ class NodeFileListCreateView(APIView):
         serializer = NodeFileUploadSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         node_file = FileService.upload(node, request.user, serializer.validated_data["file"])
-        return Response(
-            NodeFileSerializer(node_file, context={"request": request}).data,
-            status=status.HTTP_201_CREATED,
-        )
+        data = NodeFileSerializer(node_file, context={"request": request}).data
+        data["detail"] = f'"{node_file.original_name}" uploaded successfully.'
+        return Response(data, status=status.HTTP_201_CREATED)
 
 
 class NodeFileDetailView(APIView):
@@ -1993,8 +2023,12 @@ class NodeFileDetailView(APIView):
             node_file = NodeFile.objects.get(pk=pk, node__thread__created_by=request.user)
         except NodeFile.DoesNotExist:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        name = node_file.original_name
         FileService.delete_file(node_file, request.user)
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        return Response(
+            {"detail": f'"{name}" removed from the node successfully.'},
+            status=status.HTTP_200_OK,
+        )
 
 
 # ─── Activity ─────────────────────────────────────────────────────────────────

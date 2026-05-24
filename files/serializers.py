@@ -1196,6 +1196,7 @@ class NodeActivitySerializer(serializers.ModelSerializer):
 class GraphNodeSerializer(serializers.ModelSerializer):
     """Slim node shape consumed by ReactFlow."""
     is_branch = serializers.SerializerMethodField()
+    is_root = serializers.SerializerMethodField()
     file_count = serializers.SerializerMethodField()
 
     class Meta:
@@ -1204,11 +1205,15 @@ class GraphNodeSerializer(serializers.ModelSerializer):
             "id", "title", "description", "status",
             "parent_node", "branch_root",
             "stage", "row",
-            "is_branch", "file_count",
+            "is_branch", "is_root", "file_count",
         ]
 
     def get_is_branch(self, obj):
         return obj.branch_root_id is not None
+
+    def get_is_root(self, obj):
+        from .services import NodeService
+        return NodeService.is_root_node(obj)
 
     def get_file_count(self, obj):
         return obj.files.count()
