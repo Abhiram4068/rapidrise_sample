@@ -1,9 +1,9 @@
 from django.urls import path
 from files.views import (
-    RegisterView, LoginView, TokenRefreshCookieView,DesignationListView, ChangePasswordView,LogoutView, ForgotPasswordView,ResetPasswordView,UserProfileView, FileUploadView, ChunkUploadView, ClearTrash, FileDownloadView, FileViewInlineView, FileListView, FileUpdateView, ArchiveFile, FileArchiveView, FileUnarchiveView,FileDetailView,FileDeleteView, FileShareCreateListUpdateView, PublicFileAccessView,
+    RegisterView, LoginView, TokenRefreshCookieView,DesignationListView, ChangePasswordView,LogoutView, ForgotPasswordView,ResetPasswordView,UserProfileView, ChunkUploadView, ChunkUploadStatusView, ChunkUploadControlView, ClearTrash, FileDownloadView, FileViewInlineView, FileListView, FileUpdateView, ArchiveFile, FileArchiveView, FileUnarchiveView,FileDetailView,FileDeleteView, FileShareCreateListUpdateView, PublicFileAccessView,
     CollectionListCreateView, CollectionDetailView, CollectionFileView, FileStarredList, CollectionStarredList, RecentView, FileShareScheduleCreateListView, FileShareScheduleCalendarView, RevokeScheduledMailView, ReportDownloadView, ArchiveDeleteFileView, StorageSummaryView, DashboardView, StorageManagementView, StoragePermanentDeleteView,
-    DeactivateAccountView, ReactivationRequestView, ReactivationResolveView, BulkFileDeleteView, BulkFileArchiveView, BulkRestoreFileView, EmptyTrashView, BulkUnarchiveFileView,
-    DesignationChangeRequestView, DesignationChangeRequestResolveView,
+    DeactivateAccountView, ReactivationRequestView, BulkFileDeleteView, BulkFileArchiveView, BulkRestoreFileView, EmptyTrashView, BulkUnarchiveFileView,
+    DesignationChangeRequestView,
     BulkFileShareView
     )
 from . import views
@@ -25,15 +25,14 @@ urlpatterns=[
     path('profile/', UserProfileView.as_view(), name='user-profile'),
     path('auth/deactivate/', DeactivateAccountView.as_view(), name='deactivate_account'),
     path('auth/reactivation-request/', ReactivationRequestView.as_view(), name='reactivation_request'),
-    path('auth/reactivation-request/<str:pk>/resolve/', ReactivationResolveView.as_view(), name='reactivation_resolve'),
     path("designation-change/", DesignationChangeRequestView.as_view(), name="designation-change"),
-    path("designation-change/admin/", DesignationChangeRequestResolveView.as_view(), name="designation-change-admin"),
-    path("designation-change/admin/<int:pk>/resolve/", DesignationChangeRequestResolveView.as_view(), name="designation-change-resolve"),
     #password change
     path("auth/change-password/",ChangePasswordView.as_view(), name="change-password" ),
     #file download urls
-    path('files/', FileUploadView.as_view(), name='file-upload'),
+    # path('files/', FileUploadView.as_view(), name='file-upload'),
     path('files/upload/chunk/', ChunkUploadView.as_view(), name='chunk-upload'),
+    path('files/upload/chunk/status/', ChunkUploadStatusView.as_view(), name='chunk-upload-status'),
+    path('files/upload/chunk/control/', ChunkUploadControlView.as_view(), name='chunk-upload-control'),
     path('<uuid:file_id>/file-download/', FileDownloadView.as_view(), name='file-download'),
     path('<uuid:file_id>/file-view-inline/', FileViewInlineView.as_view(), name='file-view-inline'),
     path('file-list/', FileListView.as_view(), name='file-list'),

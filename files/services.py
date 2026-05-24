@@ -1,7 +1,10 @@
 from django.db.models import Q
 from django.contrib.auth import get_user_model
 from django.utils.text import slugify
-from .models import User, File, FileShareLink, Collection, CollectionFile, ScheduledMail, ReactivationRequest, DesignationChangeRequest
+from .models import (
+    User, File, FileShareLink, Collection, CollectionFile, ScheduledMail,
+    ReactivationRequest, DesignationChangeRequest, ChunkUploadSession,
+)
 from django.db.models import F
 from django.db import transaction, IntegrityError
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -80,13 +83,6 @@ def authenticate_and_generate_token(email:str, password:str)->dict:
         }
     }
 
-def get_designation():
-    return [
-        {"value": key, "label": label}
-        for key, label in User.DesignationChoices.choices
-    ]
-
-
 class DesignationListService:
     @staticmethod
     def get_active_designations():
@@ -121,7 +117,7 @@ class AuthService:
         token = default_token_generator.make_token(user)
 
         reset_url = (
-        f"{settings.FRONTEND_URL}"
+        f"{settings.FRONTEND_BASE_URL}"
         f"/auth/reset-password/confirm/"
         f"?uid={uid}&token={token}"
     )
@@ -246,18 +242,24 @@ class UserProfileService:
         return DesignationChangeRequest.objects.filter(user=user)
  
     @staticmethod
-    def create_designation_request(user: User, requested_designation: str) -> DesignationChangeRequest:
+    def create_designation_request(user: User, requested_designation) -> DesignationChangeRequest:
         """
         Submit a new designation change request.
-        Raises ValueError if:
-          - requested_designation is the same as the current one
-          - the user already has a PENDING request
+        `requested_designation` is an administration.Designation instance or pk.
         """
-        if requested_designation == user.designation:
+        from administration.models import Designation
+
+        if not isinstance(requested_designation, Designation):
+            requested_designation = Designation.objects.get(pk=requested_designation)
+
+        if user.designation_id == requested_designation.pk:
             raise ValueError(
                 "Requested designation must be different from your current designation."
             )
- 
+
+        if not user.designation_id:
+            raise ValueError("Your account has no current designation assigned.")
+
         if DesignationChangeRequest.objects.filter(
             user=user,
             status=DesignationChangeRequest.StatusChoices.PENDING
@@ -266,63 +268,13 @@ class UserProfileService:
                 "You already have a pending designation change request. "
                 "Please wait for it to be resolved before submitting a new one."
             )
- 
+
         return DesignationChangeRequest.objects.create(
             user=user,
             current_designation=user.designation,
             requested_designation=requested_designation,
             status=DesignationChangeRequest.StatusChoices.PENDING,
         )
- 
-    @staticmethod
-    def get_all_designation_requests(status_filter: str = None):
-        """
-        Return all designation change requests (admin use).
-        Optionally filter by status string e.g. 'pending'.
-        """
-        qs = DesignationChangeRequest.objects.select_related("user").all()
-        if status_filter:
-            qs = qs.filter(status=status_filter)
-        return qs
- 
-    @staticmethod
-    def resolve_designation_request(
-        pk,
-        new_status: str,
-        admin_note: str,
-        resolved_by: User
-    ) -> DesignationChangeRequest:
-        """
-        Approve or reject a pending designation change request.
-        - On approval the user's designation is updated immediately.
-        Raises:
-          - DesignationChangeRequest.DoesNotExist if pk not found
-          - ValueError for invalid status or already-resolved request
-        """
-        valid_statuses = (
-            DesignationChangeRequest.StatusChoices.APPROVED,
-            DesignationChangeRequest.StatusChoices.REJECTED,
-        )
-        if new_status not in valid_statuses:
-            raise ValueError("status must be 'approved' or 'rejected'.")
- 
-        req_obj = DesignationChangeRequest.objects.select_related("user").get(pk=pk)
- 
-        if req_obj.status != DesignationChangeRequest.StatusChoices.PENDING:
-            raise ValueError("This request has already been resolved.")
- 
-        req_obj.status      = new_status
-        req_obj.admin_note  = admin_note or ""
-        req_obj.resolved_at = timezone.now()
-        req_obj.resolved_by = resolved_by
-        req_obj.save()
- 
-        if new_status == DesignationChangeRequest.StatusChoices.APPROVED:
-            user = req_obj.user
-            user.designation = req_obj.requested_designation
-            user.save(update_fields=["designation"])
- 
-        return req_obj
 
 class StorageService:
     """
@@ -354,6 +306,204 @@ class StorageService:
 
 
 
+class ChunkUploadService:
+    """Chunked upload sessions: store, resume, pause, cancel, and progress."""
+
+    SESSION_TTL_HOURS = 24
+    UPLOAD_ID_PATTERN = r"^[a-zA-Z0-9_-]+$"
+
+    @staticmethod
+    def _validate_upload_id(upload_id):
+        import re
+        if not re.match(ChunkUploadService.UPLOAD_ID_PATTERN, str(upload_id)):
+            raise ValueError("Invalid upload_id")
+
+    @staticmethod
+    def _temp_dir(upload_id):
+        ChunkUploadService._validate_upload_id(upload_id)
+        return os.path.join(settings.MEDIA_ROOT, "temp_uploads", str(upload_id))
+
+    @staticmethod
+    def list_chunk_indices_on_disk(upload_id):
+        temp_dir = ChunkUploadService._temp_dir(upload_id)
+        if not os.path.isdir(temp_dir):
+            return []
+        indices = []
+        for name in os.listdir(temp_dir):
+            if name.startswith("chunk_"):
+                try:
+                    indices.append(int(name.split("_", 1)[1]))
+                except ValueError:
+                    continue
+        return sorted(indices)
+
+    @staticmethod
+    def sync_session_from_disk(session):
+        on_disk = ChunkUploadService.list_chunk_indices_on_disk(session.upload_id)
+        merged = sorted(set(session.chunks_received or []) | set(on_disk))
+        if merged != session.chunks_received:
+            session.chunks_received = merged
+            session.save(update_fields=["chunks_received", "updated_at"])
+        return session
+
+    @staticmethod
+    def get_next_chunk_index(session):
+        received = set(session.chunks_received or [])
+        for i in range(session.total_chunks):
+            if i not in received:
+                return i
+        return session.total_chunks
+
+    @staticmethod
+    def progress_payload(session, extra=None):
+        session = ChunkUploadService.sync_session_from_disk(session)
+        received = session.chunks_received or []
+        total = session.total_chunks
+        percent = int((len(received) / total) * 100) if total else 0
+        payload = {
+            "upload_id": session.upload_id,
+            "status": session.status,
+            "file_name": session.file_name,
+            "file_size": session.file_size,
+            "total_chunks": total,
+            "uploaded_chunks": received,
+            "chunks_uploaded": len(received),
+            "next_chunk": ChunkUploadService.get_next_chunk_index(session),
+            "progress_percent": percent,
+        }
+        if extra:
+            payload.update(extra)
+        return payload
+
+    @staticmethod
+    def get_session_for_user(user, upload_id):
+        try:
+            session = ChunkUploadSession.objects.get(upload_id=upload_id, user=user)
+        except ChunkUploadSession.DoesNotExist:
+            raise DRFValidationError({"upload_id": "Upload session not found."})
+        if session.expires_at and session.expires_at < timezone.now():
+            raise DRFValidationError({"upload_id": "Upload session has expired."})
+        return session
+
+    @staticmethod
+    def get_or_create_session(user, upload_id, file_name, file_size, content_type, total_chunks, description=None):
+        ChunkUploadService._validate_upload_id(upload_id)
+        expires_at = timezone.now() + timedelta(hours=ChunkUploadService.SESSION_TTL_HOURS)
+
+        session, created = ChunkUploadSession.objects.get_or_create(
+            upload_id=upload_id,
+            user=user,
+            defaults={
+                "file_name": file_name,
+                "file_size": int(file_size),
+                "content_type": content_type,
+                "total_chunks": int(total_chunks),
+                "chunks_received": [],
+                "status": ChunkUploadSession.Status.UPLOADING,
+                "description": description,
+                "expires_at": expires_at,
+            },
+        )
+
+        if not created:
+            if session.file_name != file_name or session.file_size != int(file_size):
+                raise DRFValidationError(
+                    {"upload_id": "This upload id is already used for a different file."}
+                )
+            if session.total_chunks != int(total_chunks):
+                session.total_chunks = int(total_chunks)
+                session.save(update_fields=["total_chunks", "updated_at"])
+            if session.status == ChunkUploadSession.Status.PAUSED:
+                session.status = ChunkUploadSession.Status.UPLOADING
+                session.save(update_fields=["status", "updated_at"])
+
+        return ChunkUploadService.sync_session_from_disk(session)
+
+    @staticmethod
+    def chunk_already_stored(upload_id, chunk_index):
+        path = os.path.join(ChunkUploadService._temp_dir(upload_id), f"chunk_{chunk_index}")
+        return os.path.isfile(path) and os.path.getsize(path) > 0
+
+    @staticmethod
+    def save_chunk_file(upload_id, chunk_index, chunk_file):
+        ChunkUploadService._validate_upload_id(upload_id)
+        temp_dir = ChunkUploadService._temp_dir(upload_id)
+        os.makedirs(temp_dir, exist_ok=True)
+        chunk_path = os.path.join(temp_dir, f"chunk_{chunk_index}")
+
+        if ChunkUploadService.chunk_already_stored(upload_id, chunk_index):
+            return {"path": chunk_path, "skipped": True}
+
+        max_retries = 3
+        for attempt in range(1, max_retries + 1):
+            try:
+                if hasattr(chunk_file, "seek"):
+                    chunk_file.seek(0)
+                with open(chunk_path, "wb+") as dest:
+                    for data in chunk_file.chunks():
+                        dest.write(data)
+                return {"path": chunk_path, "skipped": False}
+            except Exception as e:
+                logger.warning(f"Chunk upload failed attempt {attempt}: {str(e)}")
+                if os.path.exists(chunk_path):
+                    os.remove(chunk_path)
+                if attempt == max_retries:
+                    raise
+                time.sleep(1)
+
+    @staticmethod
+    def mark_chunk_received(session, chunk_index):
+        received = list(session.chunks_received or [])
+        if chunk_index not in received:
+            received.append(chunk_index)
+            received.sort()
+            session.chunks_received = received
+            session.status = ChunkUploadSession.Status.UPLOADING
+            session.save(update_fields=["chunks_received", "status", "updated_at"])
+        return session
+
+    @staticmethod
+    def set_status(session, status):
+        session.status = status
+        session.save(update_fields=["status", "updated_at"])
+        return session
+
+    @staticmethod
+    def pause_session(user, upload_id):
+        session = ChunkUploadService.get_session_for_user(user, upload_id)
+        ChunkUploadService.set_status(session, ChunkUploadSession.Status.PAUSED)
+        return ChunkUploadService.progress_payload(session)
+
+    @staticmethod
+    def resume_session(user, upload_id):
+        session = ChunkUploadService.get_session_for_user(user, upload_id)
+        if session.status == ChunkUploadSession.Status.COMPLETED:
+            raise DRFValidationError({"upload_id": "Upload already completed."})
+        ChunkUploadService.set_status(session, ChunkUploadSession.Status.UPLOADING)
+        return ChunkUploadService.progress_payload(session)
+
+    @staticmethod
+    def cancel_session(user, upload_id):
+        session = ChunkUploadService.get_session_for_user(user, upload_id)
+        temp_dir = ChunkUploadService._temp_dir(upload_id)
+        if os.path.isdir(temp_dir):
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        session.status = ChunkUploadSession.Status.CANCELLED
+        session.chunks_received = []
+        session.save(update_fields=["status", "chunks_received", "updated_at"])
+        return {"upload_id": upload_id, "status": session.status, "message": "Upload cancelled."}
+
+    @staticmethod
+    def mark_completed(session):
+        session.status = ChunkUploadSession.Status.COMPLETED
+        session.save(update_fields=["status", "updated_at"])
+
+    @staticmethod
+    def get_status(user, upload_id):
+        session = ChunkUploadService.get_session_for_user(user, upload_id)
+        return ChunkUploadService.progress_payload(session)
+
+
 class FileService:
     """
     Handles uploads with checksum-based deduplication,
@@ -363,34 +513,9 @@ class FileService:
     
     @staticmethod
     def store_chunk(upload_id, chunk_index, chunk_file):
-        """
-        Stores a single chunk of a file upload.
-        """
-        import re
-        if not re.match(r'^[a-zA-Z0-9_-]+$', str(upload_id)):
-            raise Exception("Invalid upload_id")
-        
-        temp_dir = os.path.join(settings.MEDIA_ROOT, "temp_uploads", str(upload_id))
-        os.makedirs(temp_dir, exist_ok=True)
-        
-        chunk_path = os.path.join(temp_dir, f"chunk_{chunk_index}")
-        
-        MAX_RETRIES = 3
-        for attempt in range(1, MAX_RETRIES + 1):
-            try:
-                if hasattr(chunk_file, 'seek'):
-                    chunk_file.seek(0)
-                with open(chunk_path, "wb+") as dest:
-                    for data in chunk_file.chunks():
-                        dest.write(data)
-                return chunk_path
-            except Exception as e:
-                logger.warning(f"Chunk upload failed attempt {attempt}: {str(e)}")
-                if os.path.exists(chunk_path):
-                    os.remove(chunk_path)
-                if attempt == MAX_RETRIES:
-                    raise
-                time.sleep(1)
+        """Stores a single chunk (delegates to ChunkUploadService)."""
+        result = ChunkUploadService.save_chunk_file(upload_id, chunk_index, chunk_file)
+        return result["path"]
 
     @staticmethod
     def complete_chunk_upload(user, upload_id, total_chunks, file_name, file_size, content_type, description=None, action=None):
@@ -442,8 +567,13 @@ class FileService:
             
         checksum = hash_md5.hexdigest()
         
-        # Cleanup temp dir
+        # Cleanup temp dir and DB session
         shutil.rmtree(temp_dir, ignore_errors=True)
+        try:
+            session = ChunkUploadSession.objects.get(upload_id=upload_id, user=user)
+            ChunkUploadService.mark_completed(session)
+        except ChunkUploadSession.DoesNotExist:
+            pass
         
         uploaded_path = final_relative_path
         
@@ -1290,7 +1420,7 @@ class FileShareService:
         send email
         """
         email_subject = f"{share.owner.email} shared '{share.file.original_name}' with you"
-        share_url = f"{settings.FRONTEND_URL}/files/public/{share.share_token}/"
+        share_url = f"{settings.FRONTEND_BASE_URL}/files/public/{share.share_token}/"
 
         title_display = f"\n        Title: {title}" if title else ""
         message_display = f"\n        Message from sender: \"{message}\"" if message else ""
@@ -1315,6 +1445,7 @@ class FileShareService:
         ---
         If you did not expect this file, please ignore this email.
                 """
+        print(share_url)
         try:
             send_mail(
                 subject=email_subject,
@@ -1400,69 +1531,132 @@ class FileShareService:
             
 
 class ViewFileShareService:
+    def get_share_or_404(token, action=None):
+            """
+            Look up the token in FileShareLink first, then ShareBundle.
+            Attaches an `is_bundle` flag so the view knows which type it got.
+            Raises Http404 if not found, or ValueError if expired/revoked/limits exceeded.
+            action-aware: only validates the limit relevant to the current action.
+            """
+            from .models import FileShareLink, ShareBundle
+            from django.http import Http404
+
+            # Try single-file or bundle-based share link
+            try:
+                share = FileShareLink.objects.select_related('file', 'owner', 'bundle').get(
+                    share_token=token
+                )
+                if not share.is_active:
+                    raise ValueError("This share link has been revoked.")
+                if share.expiration_datetime and share.expiration_datetime < timezone.now():
+                    raise ValueError("This share link has expired.")
+
+                # Action-aware limit checks
+                if action == 'view':
+                    if share.view_limit and share.view_count >= share.view_limit:
+                        raise ValueError("View limit reached for this share.")
+                elif action == 'download':
+                    if share.download_limit and share.download_count >= share.download_limit:
+                        raise ValueError("Download limit reached for this share.")
+                # action=None (metadata load): no hard-block, frontend handles button visibility
+
+                share.is_bundle = True if share.bundle else False
+                return share
+
+            except FileShareLink.DoesNotExist:
+                pass
+
+            # Try bundle share
+            try:
+                bundle = ShareBundle.objects.select_related('owner').get(
+                    share_token=token
+                )
+                if not bundle.is_active:
+                    raise ValueError("This share link has been revoked.")
+                if bundle.expiration_datetime and bundle.expiration_datetime < timezone.now():
+                    raise ValueError("This share link has expired.")
+
+                # Action-aware limit checks
+                if action == 'view':
+                    if bundle.view_limit and bundle.view_count >= bundle.view_limit:
+                        raise ValueError("View limit reached for this share.")
+                elif action == 'download':
+                    if bundle.download_limit and bundle.download_count >= bundle.download_limit:
+                        raise ValueError("Download limit reached for this share.")
+
+                bundle.is_bundle = True
+                return bundle
+
+            except ShareBundle.DoesNotExist:
+                pass
+
+            raise Http404("Share link not found.")
+
     @staticmethod
-    def get_share_or_404(token):
-        """
-        Look up the token in FileShareLink first, then ShareBundle.
-        Attaches an `is_bundle` flag so the view knows which type it got.
-        Raises Http404 if not found, or ValueError if expired/revoked/limits exceeded.
-        """
-        from .models import FileShareLink, ShareBundle
-        from django.http import Http404
+    def increment_access_counts(share, action):
+        """Increment only the relevant count based on action, and deactivate link only when all limits are exhausted."""
 
-        # Try single-file or bundle-based share link
-        try:
-            share = FileShareLink.objects.select_related('file', 'owner', 'bundle').get(
-                share_token=token
-            )
-            if not share.is_active:
-                raise ValueError("This share link has been revoked.")
-            if share.expiration_datetime and share.expiration_datetime < timezone.now():
-                raise ValueError("This share link has expired.")
-            if share.view_limit and share.view_count >= share.view_limit:
-                raise ValueError("View limit reached for this share.")
-            if share.download_limit and share.download_count >= share.download_limit:
-                raise ValueError("Download limit reached for this share.")
-            
-            # If it's a bundle-based share, mark it so the view knows
-            share.is_bundle = True if share.bundle else False
-            return share
-        except FileShareLink.DoesNotExist:
-            pass
+        if action == 'view':
+            share.view_count = (share.view_count or 0) + 1
+            fields_to_save = ['view_count']
+            share.save(update_fields=fields_to_save)
 
-        # Try bundle share
-        try:
-            bundle = ShareBundle.objects.select_related('owner').get(
-                share_token=token
-            )
-            if not bundle.is_active:
-                raise ValueError("This share link has been revoked.")
-            if bundle.expiration_datetime and bundle.expiration_datetime < timezone.now():
-                raise ValueError("This share link has expired.")
-            if bundle.view_limit and bundle.view_count >= bundle.view_limit:
-                raise ValueError("View limit reached for this share.")
-            if bundle.download_limit and bundle.download_count >= bundle.download_limit:
-                raise ValueError("Download limit reached for this share.")
-            bundle.is_bundle = True
-            return bundle
-        except ShareBundle.DoesNotExist:
-            pass
+            if hasattr(share, 'bundle') and share.bundle:
+                bundle = share.bundle
+                bundle.view_count = (bundle.view_count or 0) + 1
+                bundle.save(update_fields=['view_count'])
 
-        raise Http404("Share link not found.")
+        elif action == 'download':
+            share.download_count = (share.download_count or 0) + 1
+            fields_to_save = ['download_count']
+            share.save(update_fields=fields_to_save)
 
-    @staticmethod
-    def increment_access_counts(share):
-        """Increment view and download counts for both share types."""
-        share.view_count = (share.view_count or 0) + 1
-        share.download_count = (share.download_count or 0) + 1
-        share.save(update_fields=['view_count', 'download_count'])
+            if hasattr(share, 'bundle') and share.bundle:
+                bundle = share.bundle
+                bundle.download_count = (bundle.download_count or 0) + 1
+                bundle.save(update_fields=['download_count'])
 
-        # If it's a bundle-based share, increment the bundle counts too
+        # ── Deactivation check (runs after either action) ──────────────────────
+        # One-time download: deactivate immediately after first download
+        if share.permission == 'one_time_download' and action == 'download':
+            share.accessed = True
+            share.is_active = False
+            share.accessed_at = timezone.now()
+            share.save(update_fields=['accessed', 'is_active', 'accessed_at'])
+            return
+
+        # For all other permissions: only deactivate when BOTH limits are exhausted.
+        # A limit of None means unlimited — treat it as not reached.
+        view_exhausted = share.view_limit is not None and share.view_count >= share.view_limit
+        download_exhausted = share.download_limit is not None and share.download_count >= share.download_limit
+
+        # If a side has no limit set, don't count it as a blocking condition
+        view_blocks = share.view_limit is not None and view_exhausted
+        download_blocks = share.download_limit is not None and download_exhausted
+
+        # Only deactivate if every limit that EXISTS is exhausted
+        limits_exist = share.view_limit is not None or share.download_limit is not None
+        all_exhausted = (share.view_limit is None or view_exhausted) and \
+                        (share.download_limit is None or download_exhausted)
+
+        if limits_exist and all_exhausted:
+            share.accessed = True
+            share.is_active = False
+            share.accessed_at = timezone.now()
+            share.save(update_fields=['accessed', 'is_active', 'accessed_at'])
+
+        # Bundle deactivation: same logic
         if hasattr(share, 'bundle') and share.bundle:
             bundle = share.bundle
-            bundle.view_count = (bundle.view_count or 0) + 1
-            bundle.download_count = (bundle.download_count or 0) + 1
-            bundle.save(update_fields=['view_count', 'download_count'])
+            b_view_exhausted = bundle.view_limit is not None and bundle.view_count >= bundle.view_limit
+            b_download_exhausted = bundle.download_limit is not None and bundle.download_count >= bundle.download_limit
+            b_limits_exist = bundle.view_limit is not None or bundle.download_limit is not None
+            b_all_exhausted = (bundle.view_limit is None or b_view_exhausted) and \
+                            (bundle.download_limit is None or b_download_exhausted)
+
+            if b_limits_exist and b_all_exhausted:
+                bundle.is_active = False
+                bundle.save(update_fields=['is_active'])
 
     @staticmethod
     def get_file_response(share):
@@ -2061,11 +2255,44 @@ class ThreadService:
         )
         stages = ProjectStage.objects.filter(thread_id=thread_id)
         return {"nodes": nodes, "edges": edges, "stages": stages}
+
+
+class StageService:
+
+    @staticmethod
+    def delete_stage(stage: ProjectStage, user) -> str:
+        """Delete a stage if it has no active nodes. Returns the stage name."""
+        node_count = ProjectNode.objects.filter(stage=stage, is_deleted=False).count()
+        if node_count > 0:
+            raise DRFValidationError(
+                {
+                    "detail": (
+                        f'Cannot delete stage "{stage.name}" because it still contains '
+                        f"{node_count} active node(s). Move or archive those nodes first."
+                    )
+                }
+            )
+        name = stage.name
+        stage.delete()
+        return name
  
  
 # ─── Node ─────────────────────────────────────────────────────────────────────
  
 class NodeService:
+
+    @staticmethod
+    def is_root_node(node: ProjectNode) -> bool:
+        """Root node: auto-created with the thread (first node), or id matches thread id."""
+        if node.id == node.thread_id:
+            return True
+        root_id = (
+            ProjectNode.objects.filter(thread_id=node.thread_id, is_deleted=False)
+            .order_by("created_at", "id")
+            .values_list("id", flat=True)
+            .first()
+        )
+        return root_id == node.id
  
     @staticmethod
     def add_node(thread: ProjectThread, user, validated_data: dict) -> ProjectNode:
@@ -2150,6 +2377,11 @@ class NodeService:
     @staticmethod
     def soft_delete(node: ProjectNode, user):
         """Archive instead of hard-delete; mark all downstream nodes as BLOCKED."""
+        if NodeService.is_root_node(node):
+            raise DRFValidationError(
+                {"detail": "The root node cannot be deleted. It is required for this thread."}
+            )
+
         with transaction.atomic():
             node.is_deleted = True
             node.status = ProjectNode.Status.ARCHIVED

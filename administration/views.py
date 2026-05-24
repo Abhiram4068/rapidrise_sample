@@ -98,7 +98,7 @@ class AdminUserListView(APIView):
                 models.Q(first_name__icontains=search) |
                 models.Q(last_name__icontains=search)  |
                 models.Q(email__icontains=search)      |
-                models.Q(designation__icontains=search) |
+                models.Q(designation__name__icontains=search) |
                 models.Q(account_status__icontains=search)
             )
             if search.lower() == 'active':
@@ -148,7 +148,7 @@ class AdminViewNewUserRequests(APIView):
                 models.Q(first_name__icontains=search) |
                 models.Q(last_name__icontains=search) |
                 models.Q(email__icontains=search) |
-                models.Q(designation__icontains=search) |
+                models.Q(designation__name__icontains=search) |
                 models.Q(account_status__icontains=search)
             )
             if search.lower() == 'active':
@@ -197,7 +197,7 @@ class AdminBlockedUserListView(APIView):
                 models.Q(first_name__icontains=search) |
                 models.Q(last_name__icontains=search)  |
                 models.Q(email__icontains=search)      |
-                models.Q(designation__icontains=search) |
+                models.Q(designation__name__icontains=search) |
                 models.Q(account_status__icontains=search)
             )
             users = users.filter(search_query)
@@ -217,7 +217,7 @@ class AdminDeletedUserListView(APIView):
                 models.Q(first_name__icontains=search) |
                 models.Q(last_name__icontains=search)  |
                 models.Q(email__icontains=search)      |
-                models.Q(designation__icontains=search) |
+                models.Q(designation__name__icontains=search) |
                 models.Q(account_status__icontains=search)
             )
             users = users.filter(search_query)
@@ -282,7 +282,7 @@ class AdminDesignationChangeRequestListView(APIView):
                 models.Q(user__email__icontains=search) |
                 models.Q(user__first_name__icontains=search) |
                 models.Q(user__last_name__icontains=search) |
-                models.Q(requested_designation__icontains=search)
+                models.Q(requested_designation__name__icontains=search)
             )
 
         paginator = StandardResultsPagination()

@@ -12,6 +12,11 @@ class RegisterSerializer(serializers.ModelSerializer):
     confirm_password=serializers.CharField(write_only=True, min_length=8)
     date_of_birth = serializers.DateField(required=False, allow_null=True)
     email = serializers.EmailField()
+    designation = serializers.PrimaryKeyRelatedField(
+        queryset=Designation.objects.all(),
+        required=True,
+    )
+
     class Meta:
         model=User
         fields=[
@@ -19,6 +24,7 @@ class RegisterSerializer(serializers.ModelSerializer):
             'first_name',
             'last_name',
             'date_of_birth',
+            'designation',
             'password',
             'confirm_password'
         ]
@@ -93,7 +99,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = User
-        fields = ["id", "email", "first_name", "last_name", "designation", "date_joined", "total_files", "date_of_birth", "status", "account_status", "storage_used_bytes", "has_pending_reactivation_request", "is_staff", "is_superuser"]
+        fields = ["id", "email", "first_name", "last_name", "designation", "designation_id", "date_joined", "total_files", "date_of_birth", "status", "account_status", "storage_used_bytes", "has_pending_reactivation_request", "is_staff", "is_superuser"]
         read_only_fields = fields
 
     def get_date_joined(self, obj):
@@ -106,7 +112,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
         return ReactivationRequest.objects.filter(user=obj, is_resolved=False).exists()
 
     def get_designation(self, obj):
-        return obj.get_designation_display()
+        return obj.designation.name if obj.designation_id else None
 
     def get_storage_used_bytes(self, obj):
         return obj.storage_used_bytes
@@ -136,8 +142,8 @@ class DesignationChangeRequestAdminSerializer(serializers.ModelSerializer):
     """
     user_email     = serializers.EmailField(source="user.email",      read_only=True)
     user_full_name = serializers.SerializerMethodField()
-    current_designation_display   = serializers.CharField(source="get_current_designation_display",   read_only=True)
-    requested_designation_display = serializers.CharField(source="get_requested_designation_display", read_only=True)
+    current_designation_display   = serializers.CharField(source="current_designation.name", read_only=True)
+    requested_designation_display = serializers.CharField(source="requested_designation.name", read_only=True)
  
     class Meta:
         model  = DesignationChangeRequest
@@ -168,8 +174,12 @@ class DesignationChangeRequestAdminSerializer(serializers.ModelSerializer):
 class DesignationChangeRequestCreateSerializer(serializers.ModelSerializer):
     """
     Used by the user to submit a new designation change request.
-    Only `requested_designation` is writable — everything else is set server-side.
+    `requested_designation` is the administration.Designation primary key (e.g. AJNW).
     """
+    requested_designation = serializers.PrimaryKeyRelatedField(
+        queryset=Designation.objects.all(),
+    )
+
     class Meta:
         model  = DesignationChangeRequest
         fields = ["id", "requested_designation", "status", "created_at"]
@@ -177,7 +187,11 @@ class DesignationChangeRequestCreateSerializer(serializers.ModelSerializer):
  
     def validate_requested_designation(self, value):
         user = self.context["request"].user
-        if value == user.designation:
+        if not user.designation_id:
+            raise serializers.ValidationError(
+                "Your account has no current designation assigned."
+            )
+        if value.pk == user.designation_id:
             raise serializers.ValidationError(
                 "Requested designation must be different from your current designation."
             )
@@ -185,7 +199,6 @@ class DesignationChangeRequestCreateSerializer(serializers.ModelSerializer):
  
     def validate(self, attrs):
         user = self.context["request"].user
-        # Block if a pending request already exists
         if DesignationChangeRequest.objects.filter(
             user=user, status=DesignationChangeRequest.StatusChoices.PENDING
         ).exists():
@@ -195,19 +208,13 @@ class DesignationChangeRequestCreateSerializer(serializers.ModelSerializer):
             )
         return attrs
  
-    def create(self, validated_data):
-        user = self.context["request"].user
-        validated_data["user"] = user
-        validated_data["current_designation"] = user.designation
-        return super().create(validated_data)
- 
  
 class DesignationChangeRequestListSerializer(serializers.ModelSerializer):
     """
     Used by the user to list their own past requests.
     """
-    current_designation_display   = serializers.CharField(source="get_current_designation_display",   read_only=True)
-    requested_designation_display = serializers.CharField(source="get_requested_designation_display", read_only=True)
+    current_designation_display   = serializers.CharField(source="current_designation.name", read_only=True)
+    requested_designation_display = serializers.CharField(source="requested_designation.name", read_only=True)
  
     class Meta:
         model  = DesignationChangeRequest
@@ -227,7 +234,10 @@ class ReactivationRequestSerializer(serializers.ModelSerializer):
     user_id = serializers.IntegerField(source='user.id', read_only=True)
     user_email = serializers.EmailField(source='user.email', read_only=True)
     user_full_name = serializers.SerializerMethodField()
-    designation = serializers.CharField(source='user.designation', read_only=True)
+    designation = serializers.SerializerMethodField()
+
+    def get_designation(self, obj):
+        return obj.user.designation.name if obj.user.designation_id else None
 
     class Meta:
         model = ReactivationRequest
@@ -247,66 +257,170 @@ class DeactivateAccountSerializer(serializers.Serializer):
         return value
 
       
-class FileUploadSerialzier(serializers.Serializer):
-    files=serializers.ListField(
-        child=serializers.FileField(
-            max_length=100000000,
-            allow_empty_file=False
-        ),
-        allow_empty=False
-    )
-    
-    def validate_files(self, files):
-        max_file_size=100*1024*1024
-        ALLOWED_CONTENT_TYPES = [
-        'image/jpeg',
-        'image/png',
-        'application/pdf',
-        'text/plain',
-        'application/msword',
-        'application/octet-stream',
-        'application/vnd.ms-excel',
-        'application/zip',
-        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        'image/webp',
-        'application/vnd.openxmlformats-officedocument.presentationml.presentation'
-        
-    ]
-        
-        for file in files:
-            if file.size>max_file_size:
-                logger.warning(
-                    f"File too large | name={file.name} | size={file.size}"
-                )
-                raise serializers.ValidationError(
-                    f"File '{file.name}' exceeds maximum size of 100MB"
-                )
-            if file.content_type not in ALLOWED_CONTENT_TYPES:
-                logger.warning(
-                    f"File type not allowed | name={file.name} | type={file.content_type}"
-                )
-                raise serializers.ValidationError(
-                    f"File '{file.name}' is not allowed"
-                )
+import magic
+from rest_framework import serializers
+from .services import StorageService
 
-        return files
-    
-    def validate(self, data):
-        user=self.context['request'].user
-        files=data.get('files', [])
-        
-        total_upload_size=sum(file.size for file in files)
-        current_usage=File.objects.filter(user=user).aggregate(
-            total=models.Sum('file_size')
-        )['total'] or 0
-        
-        max_storage=1 * 1024 * 1024 * 1024 
-        if total_upload_size+current_usage>max_storage:
-            available_storage=max_storage-current_usage
+ALLOWED_CONTENT_TYPES = {
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.ms-powerpoint",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "text/plain",
+    "text/csv",
+    "image/jpeg",
+    "image/png",
+    "application/pdf",
+    "image/webp",
+    "application/zip",
+    "application/x-zip-compressed",
+    "application/json",
+    "application/xml",
+    "text/xml",
+}
+
+MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024  # 100 MB per file
+MAX_STORAGE_BYTES   = 1 * 1024 * 1024 * 1024  # 1 GB per user
+MAX_CHUNK_BYTES     = 10 * 1024 * 1024  # must match frontend CHUNK_SIZE
+
+
+def _format_bytes(n: int) -> str:
+    MB = 1024 * 1024
+    GB = 1024 * 1024 * 1024
+    if n < MB:
+        return f"{n / 1024:.2f} KB"
+    elif n < GB:
+        return f"{n / MB:.2f} MB"
+    return f"{n / GB:.2f} GB"
+
+
+# ─── Chunk upload serializer ──────────────────────────────────────────────────
+
+class ChunkUploadSerializer(serializers.Serializer):
+    upload_id    = serializers.CharField()
+    chunk_index  = serializers.IntegerField(min_value=0)
+    total_chunks = serializers.IntegerField(min_value=1)
+    file_name    = serializers.CharField()
+    file_size    = serializers.IntegerField(min_value=1)
+    content_type = serializers.CharField()          # client-declared, cross-checked by magic
+    file         = serializers.FileField()
+    action       = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    description  = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
+    # ── per-field validators ──────────────────────────────────────────────────
+
+    def validate_file_size(self, value):
+        if value > MAX_FILE_SIZE_BYTES:
             raise serializers.ValidationError(
-                f"Insufficient storage space. Only {available_storage} left. Try deleting some files!"
+                f"File size {_format_bytes(value)} exceeds the {_format_bytes(MAX_FILE_SIZE_BYTES)} limit."
             )
+        return value
+
+    def validate_file(self, file):
+        """
+        Per-chunk: enforce chunk byte limit.
+        First chunk only: python-magic MIME detection and allow-list check.
+        """
+        file.seek(0, 2)
+        real_size = file.tell()
+        file.seek(0)
+
+        if real_size > MAX_CHUNK_BYTES:
+            raise serializers.ValidationError(
+                f"Uploaded chunk size {_format_bytes(real_size)} exceeds the "
+                f"{_format_bytes(MAX_CHUNK_BYTES)} chunk limit."
+            )
+
+        chunk_index = self.initial_data.get("chunk_index")
+        try:
+            chunk_index = int(chunk_index)
+        except (TypeError, ValueError):
+            chunk_index = 0
+
+        if chunk_index != 0:
+            return file
+
+        header = file.read(2048)
+        file.seek(0)
+
+        detected_mime = magic.from_buffer(header, mime=True)
+
+        if detected_mime not in ALLOWED_CONTENT_TYPES:
+            raise serializers.ValidationError(
+                f"File type '{detected_mime}' is not allowed."
+            )
+
+        self._detected_mime = detected_mime
+        return file
+
+    # ── cross-field validation ────────────────────────────────────────────────
+
+    def validate(self, data):
+        # chunk_index < total_chunks sanity check
+        if data["chunk_index"] >= data["total_chunks"]:
+            raise serializers.ValidationError(
+                {"chunk_index": "chunk_index must be less than total_chunks."}
+            )
+
+        # MIME cross-check on first chunk only (magic runs on chunk 0)
+        if data["chunk_index"] == 0:
+            detected = getattr(self, "_detected_mime", None)
+            declared = data.get("content_type", "")
+            if detected:
+                if declared in ("", "application/octet-stream"):
+                    data["content_type"] = detected
+                elif detected != declared:
+                    raise serializers.ValidationError(
+                        {
+                            "content_type": (
+                                f"Declared content type '{declared}' does not match "
+                                f"the detected type '{detected}'."
+                            )
+                        }
+                    )
+
         return data
+
+    # ── storage quota check (only on first chunk) ─────────────────────────────
+
+    def validate_storage(self, user):
+        """
+        Call this explicitly in the view after is_valid(), only for chunk_index == 0.
+        Uses StorageService.claim pattern: raises ValidationError if quota exceeded.
+        """
+        file_size    = self.validated_data["file_size"]
+        current_usage = user.storage_used_bytes          # already up-to-date (refresh_from_db in view)
+        available     = MAX_STORAGE_BYTES - current_usage
+
+        if file_size > available:
+            raise serializers.ValidationError(
+                {
+                    "error": (
+                        f"Insufficient storage. Only {_format_bytes(available)} left. "
+                        "Try deleting some files!"
+                    )
+                }
+            )
+
+
+class ChunkUploadStatusQuerySerializer(serializers.Serializer):
+    upload_id = serializers.CharField()
+
+
+class ChunkUploadControlSerializer(serializers.Serializer):
+    ACTION_CHOICES = ("pause", "resume", "cancel")
+
+    upload_id = serializers.CharField()
+    action = serializers.ChoiceField(choices=ACTION_CHOICES)
+
+    def validate_upload_id(self, value):
+        import re
+        if not re.match(r"^[a-zA-Z0-9_-]+$", str(value)):
+            raise serializers.ValidationError("Invalid upload_id format.")
+        return value
+
 
 class FileViewInlineSerializer(serializers.ModelSerializer):
     class Meta:
@@ -558,7 +672,7 @@ class FileShareListSerializer(serializers.ModelSerializer):
     def get_status(self, obj):
         now = timezone.now()
 
-        if obj.accessed_at and obj.is_active:
+        if obj.accessed:
             return "Accessed"
 
         if obj.expiration_datetime and now > obj.expiration_datetime:
@@ -864,6 +978,15 @@ class FileShareSerializer(serializers.ModelSerializer):
 class PublicFileSerializer(serializers.Serializer):
     token = serializers.CharField()
 
+    def validate(self, data):
+        from .services import ViewFileShareService
+        from django.http import Http404
+        try:
+            self.share = ViewFileShareService.get_share_or_404(data['token'])
+        except (Http404, ValueError) as e:
+            raise serializers.ValidationError(str(e))
+        return data
+
 
 class ReportQuerySerializer(serializers.Serializer):
     download = serializers.BooleanField(required=False, default=False)
@@ -1073,6 +1196,7 @@ class NodeActivitySerializer(serializers.ModelSerializer):
 class GraphNodeSerializer(serializers.ModelSerializer):
     """Slim node shape consumed by ReactFlow."""
     is_branch = serializers.SerializerMethodField()
+    is_root = serializers.SerializerMethodField()
     file_count = serializers.SerializerMethodField()
 
     class Meta:
@@ -1081,11 +1205,15 @@ class GraphNodeSerializer(serializers.ModelSerializer):
             "id", "title", "description", "status",
             "parent_node", "branch_root",
             "stage", "row",
-            "is_branch", "file_count",
+            "is_branch", "is_root", "file_count",
         ]
 
     def get_is_branch(self, obj):
         return obj.branch_root_id is not None
+
+    def get_is_root(self, obj):
+        from .services import NodeService
+        return NodeService.is_root_node(obj)
 
     def get_file_count(self, obj):
         return obj.files.count()

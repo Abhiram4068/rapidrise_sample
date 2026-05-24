@@ -11,18 +11,21 @@ from rest_framework_simplejwt.exceptions import TokenError
 from django.http import FileResponse
 from django.core.exceptions import ValidationError, PermissionDenied
 from files.serializers import (
-    RegisterSerializer, LoginSerializer, UserProfileSerializer,ChangePasswordSerialzier, DeactivateAccountSerializer, FileUploadSerialzier, FilesListSerializer, FileUpdateSerializer ,FileShareSerializer, FileShareCreateSerializer, PublicFileSerializer,CollectionSerializer, CollectionFileSerializer
+    RegisterSerializer, LoginSerializer, UserProfileSerializer,ChangePasswordSerialzier, DeactivateAccountSerializer, ChunkUploadSerializer, ChunkUploadStatusQuerySerializer, ChunkUploadControlSerializer, FilesListSerializer, FileUpdateSerializer ,FileShareSerializer, FileShareCreateSerializer, PublicFileSerializer,CollectionSerializer, CollectionFileSerializer
     ,ScheduledMailSerializer, FileShareListSerializer, ReportQuerySerializer, DesignationSerializer, ResetPasswordSerializer, ForgotPasswordSerializer, ReactivationRequestSerializer, DesignationChangeRequestListSerializer, DesignationChangeRequestCreateSerializer, DesignationChangeRequestAdminSerializer
     )
-from files.models import ReactivationRequest, DesignationChangeRequest
+from files.models import ReactivationRequest, DesignationChangeRequest, ChunkUploadSession
 from files.services import (
-    create_user, get_designation, authenticate_and_generate_token, AuthenticationError ,AuthService, UserProfileService, FileService, FileShareService, ViewFileShareService, CollectionService, ReportService, AccountService
+    create_user, authenticate_and_generate_token, AuthenticationError ,AuthService, UserProfileService, FileService, ChunkUploadService, FileShareService, ViewFileShareService, CollectionService, ReportService, AccountService, ThreadService, StageService, NodeService, DependencyService
     )
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.exceptions import NotFound, ValidationError as DRFValidationError
 from files.authentication import CookieJWTAuthentication
 from files.exceptions import StorageLimitExceeded
 from django.db.models import F, Sum, Q
+from rest_framework import serializers
+from .permissions import IsActiveAccount
+
 
 import logging
 logger = logging.getLogger(__name__)
@@ -221,7 +224,7 @@ class ResetPasswordView(APIView):
             status=status.HTTP_200_OK,
         )
 class UserProfileView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
     serializer_class = UserProfileSerializer
 
     def get(self, request) -> Response:
@@ -255,7 +258,7 @@ class ChangePasswordView(APIView):
             )
 
 class DeactivateAccountView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
     serializer_class = DeactivateAccountSerializer
 
     def post(self, request):
@@ -318,38 +321,7 @@ class ReactivationRequestView(APIView):
             status=status.HTTP_201_CREATED
         )
 
-class ReactivationResolveView(APIView):
-    authentication_classes = [CookieJWTAuthentication]
-    permission_classes = [IsAdminUser]
 
-    def post(self, request, pk):
-        try:
-            # Handle both UUID and potentially older integer IDs if they exist
-            react_req = ReactivationRequest.objects.get(pk=pk)
-        except (ReactivationRequest.DoesNotExist, ValidationError):
-            return Response({"error": "Request not found or invalid ID format"}, status=status.HTTP_404_NOT_FOUND)
-
-        action = request.data.get('action')
-        user_id = request.data.get('user_id')
-
-        # Optional: Verify user_id consistency if provided
-        if user_id and react_req.user.id != int(user_id):
-            return Response({"error": "User ID mismatch"}, status=status.HTTP_400_BAD_REQUEST)
-        
-        if action == 'approve':
-            user = react_req.user
-            user.account_status = 'ACTIVE'
-            user.is_active = True
-            user.save()
-            react_req.is_resolved = True
-            react_req.save()
-            return Response({"message": "Account reactivated successfully"})
-        elif action == 'reject':
-            react_req.is_resolved = True
-            react_req.save()
-            return Response({"message": "Reactivation request rejected. Status remains deactivated."})
-        
-        return Response({"error": "Invalid action"}, status=status.HTTP_400_BAD_REQUEST)
 
 
 class DesignationChangeRequestView(APIView):
@@ -357,7 +329,7 @@ class DesignationChangeRequestView(APIView):
     GET  /api/designation-change/   — list the authenticated user's own requests
     POST /api/designation-change/   — submit a new designation change request
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
  
     def get(self, request):
         requests = UserProfileService.get_user_designation_requests(user=request.user)
@@ -383,169 +355,232 @@ class DesignationChangeRequestView(APIView):
         return Response(out.data, status=status.HTTP_201_CREATED)
 
 
-
- 
-class DesignationChangeRequestResolveView(APIView):
-    """
-    GET   /api/designation-change/admin/               — list all requests (admin only)
-    PATCH /api/designation-change/admin/<pk>/resolve/  — approve or reject (admin only)
- 
-    PATCH body: { "status": "approved" | "rejected", "admin_note": "optional" }
-    """
-    permission_classes = [IsAdminUser]
- 
-    def get(self, request):
-        status_filter = request.query_params.get("status")
-        requests = UserProfileService.get_all_designation_requests(status_filter=status_filter)
-        serializer = DesignationChangeRequestAdminSerializer(requests, many=True)
-        return Response(serializer.data)
- 
-    def patch(self, request, pk):
-        try:
-            request_obj = UserProfileService.resolve_designation_request(
-                pk=pk,
-                new_status=request.data.get("status"),
-                admin_note=request.data.get("admin_note", ""),
-                resolved_by=request.user,
-            )
-        except DesignationChangeRequest.DoesNotExist:
-            return Response({"detail": "Request not found."}, status=status.HTTP_404_NOT_FOUND)
-        except ValueError as e:
-            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
- 
-        serializer = DesignationChangeRequestAdminSerializer(request_obj)
-        return Response(serializer.data)
-
 import time
 from rest_framework.exceptions import ValidationError
 
 class ChunkUploadView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def post(self, request):
-        upload_id = request.data.get("upload_id")
-        chunk_index = request.data.get("chunk_index")
-        total_chunks = request.data.get("total_chunks")
-        file_name = request.data.get("file_name")
-        file_size = request.data.get("file_size")
-        content_type = request.data.get("content_type")
-        file_chunk = request.FILES.get("file")
+        payload = {
+            "upload_id":    request.data.get("upload_id"),
+            "chunk_index":  request.data.get("chunk_index"),
+            "total_chunks": request.data.get("total_chunks"),
+            "file_name":    request.data.get("file_name"),
+            "file_size":    request.data.get("file_size"),
+            "content_type": request.data.get("content_type"),
+            "file":         request.FILES.get("file"),
+        }
         action = request.data.get("action")
+        if action is not None and action != "":
+            payload["action"] = action
         description = request.data.get("description")
+        if description is not None and description != "":
+            payload["description"] = description
 
-        if not all([upload_id, chunk_index, total_chunks, file_chunk]):
-            return Response({"error": "Missing required chunk parameters"}, status=status.HTTP_400_BAD_REQUEST)
+        serializer = ChunkUploadSerializer(data=payload)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        data = serializer.validated_data
+        upload_id = data["upload_id"]
+        chunk_index = data["chunk_index"]
+        total_chunks = data["total_chunks"]
 
         try:
-            # 0. Pre-check storage for the first chunk
-            if str(chunk_index) == "0":
-                max_storage = 1 * 1024 * 1024 * 1024
-                request.user.refresh_from_db()
-                current_usage = request.user.storage_used_bytes
-                if int(file_size) + current_usage > max_storage:
-                    available = max_storage - current_usage
-                    mb = 1024 * 1024
-                    gb = 1024 * 1024 * 1024
-                    if available < mb:
-                        avail_str = f"{available / 1024:.2f} KB"
-                    elif available < gb:
-                        avail_str = f"{available / mb:.2f} MB"
-                    else:
-                        avail_str = f"{available / gb:.2f} GB"
-                    raise DRFValidationError({"error": f"Insufficient storage space. Only {avail_str} left. Try deleting some files!"})
+            session = ChunkUploadService.get_or_create_session(
+                user=request.user,
+                upload_id=upload_id,
+                file_name=data["file_name"],
+                file_size=data["file_size"],
+                content_type=data["content_type"],
+                total_chunks=total_chunks,
+                description=data.get("description"),
+            )
 
-            # 1. Store chunk
-            FileService.store_chunk(upload_id, chunk_index, file_chunk)
-             
-            # 2. If it's the last chunk, assemble it
-            if int(chunk_index) == int(total_chunks) - 1:
+            if session.status == ChunkUploadSession.Status.CANCELLED:
+                return Response(
+                    {"error": "This upload was cancelled. Start a new upload."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if session.status == ChunkUploadSession.Status.COMPLETED:
+                return Response(
+                    {"error": "This upload is already completed."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            session = ChunkUploadService.sync_session_from_disk(session)
+            already_uploaded = chunk_index in (session.chunks_received or [])
+
+            # Storage quota check only when starting a new upload (no chunks yet)
+            if chunk_index == 0 and not session.chunks_received:
+                request.user.refresh_from_db()
+                try:
+                    serializer.validate_storage(request.user)
+                except serializers.ValidationError as e:
+                    return Response(e.detail, status=status.HTTP_409_CONFLICT)
+
+            if not already_uploaded:
+                save_result = ChunkUploadService.save_chunk_file(
+                    upload_id, chunk_index, data["file"]
+                )
+                if not save_result.get("skipped"):
+                    session = ChunkUploadService.mark_chunk_received(session, chunk_index)
+            else:
+                session = ChunkUploadService.sync_session_from_disk(session)
+
+            progress = ChunkUploadService.progress_payload(
+                session,
+                extra={
+                    "chunk_index": chunk_index,
+                    "already_uploaded": already_uploaded,
+                    "message": f"Chunk {chunk_index} received",
+                },
+            )
+
+            all_chunks_ready = len(session.chunks_received or []) >= total_chunks
+            is_last_chunk = chunk_index == total_chunks - 1
+
+            if is_last_chunk and all_chunks_ready:
                 result = FileService.complete_chunk_upload(
                     user=request.user,
                     upload_id=upload_id,
                     total_chunks=total_chunks,
-                    file_name=file_name,
-                    file_size=file_size,
-                    content_type=content_type,
-                    description=description,
-                    action=action
+                    file_name=data["file_name"],
+                    file_size=data["file_size"],
+                    content_type=data["content_type"],
+                    description=data.get("description"),
+                    action=data.get("action"),
                 )
-                return Response({
-                    "message": "File uploaded successfully",
-                    "file": result
-                }, status=status.HTTP_201_CREATED)
-            
-            # Otherwise, just acknowledge chunk
-            return Response({"message": f"Chunk {chunk_index} uploaded successfully"}, status=status.HTTP_200_OK)
+                progress["status"] = ChunkUploadSession.Status.COMPLETED
+                progress["progress_percent"] = 100
+                return Response(
+                    {
+                        "message": "File uploaded successfully",
+                        "file": result,
+                        **progress,
+                    },
+                    status=status.HTTP_201_CREATED,
+                )
+
+            return Response(progress, status=status.HTTP_200_OK)
 
         except DRFValidationError as e:
             detail = e.detail
             if isinstance(detail, dict):
-                detail = {k: v[0] if isinstance(v, list) and len(v) == 1 else v for k, v in detail.items()}
-            logger.warning(f"Validation error during chunk upload | detail={detail}")
+                detail = {
+                    k: v[0] if isinstance(v, list) and len(v) == 1 else v
+                    for k, v in detail.items()
+                }
+            logger.warning(f"Chunk upload validation error | detail={detail}")
             return Response(detail, status=status.HTTP_409_CONFLICT)
         except StorageLimitExceeded as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
-            logger.error(f"Unexpected error during chunk upload | error={str(e)}")
-            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            logger.error(f"Unexpected chunk upload error | error={str(e)}")
+            return Response({"error": "An unexpected error occurred."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-class FileUploadView(APIView):
-    permission_classes = [IsAuthenticated]
 
-    def post(self, request):
-        start_time = time.time()
-        logger.info(f"File upload request started | user_id={request.user.id}")
+class ChunkUploadStatusView(APIView):
+    """GET upload progress and which chunks are already on the server."""
+    permission_classes = [IsActiveAccount]
 
-        serializer = FileUploadSerialzier(
-            data=request.data,
-            context={'request': request}
+    def get(self, request):
+        serializer = ChunkUploadStatusQuerySerializer(
+            data={"upload_id": request.query_params.get("upload_id")}
         )
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        files = serializer.validated_data['files']
-        action = request.data.get("action")
+        try:
+            progress = ChunkUploadService.get_status(
+                request.user, serializer.validated_data["upload_id"]
+            )
+            return Response(progress, status=status.HTTP_200_OK)
+        except DRFValidationError as e:
+            return Response(e.detail, status=status.HTTP_404_NOT_FOUND)
+
+
+class ChunkUploadControlView(APIView):
+    """POST pause, resume, or cancel an in-progress upload."""
+    permission_classes = [IsActiveAccount]
+
+    def post(self, request):
+        serializer = ChunkUploadControlSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        upload_id = serializer.validated_data["upload_id"]
+        action = serializer.validated_data["action"]
 
         try:
-            logger.info(f"{len(files)} files received for upload | user_id={request.user.id}")
-            result = FileService.upload_files(
-                user=request.user, 
-                files=files, 
-                action=action, 
-                description=request.data.get("description")
-            )
-            
-            uploaded_count = len(result["uploaded"])
-            failed_count = len(result["failed"])
-            
-            duration = time.time() - start_time
-            logger.info(
-                f"File upload cycle complete | user_id={request.user.id} | "
-                f"success={uploaded_count} | failed={failed_count} | duration={duration:.2f}s"
-            )
+            if action == "pause":
+                result = ChunkUploadService.pause_session(request.user, upload_id)
+            elif action == "resume":
+                result = ChunkUploadService.resume_session(request.user, upload_id)
+            else:
+                result = ChunkUploadService.cancel_session(request.user, upload_id)
+            return Response(result, status=status.HTTP_200_OK)
+        except DRFValidationError as e:
+            return Response(e.detail, status=status.HTTP_404_NOT_FOUND)
 
-            # If everything failed, might want a different status code, but 207 Multi-Status or 201 with failed list is common
-            status_code = status.HTTP_201_CREATED if uploaded_count > 0 else status.HTTP_400_BAD_REQUEST
+# class FileUploadView(APIView):
+#     permission_classes = [IsActiveAccount]
+
+#     def post(self, request):
+#         start_time = time.time()
+#         logger.info(f"File upload request started | user_id={request.user.id}")
+
+#         serializer = FileUploadSerialzier(
+#             data=request.data,
+#             context={'request': request}
+#         )
+#         if not serializer.is_valid():
+#             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+#         files = serializer.validated_data['files']
+#         action = request.data.get("action")
+
+#         try:
+#             logger.info(f"{len(files)} files received for upload | user_id={request.user.id}")
+#             result = FileService.upload_files(
+#                 user=request.user, 
+#                 files=files, 
+#                 action=action, 
+#                 description=request.data.get("description")
+#             )
             
-            return Response(
-                {
-                    'message': f'{uploaded_count} file(s) uploaded, {failed_count} failed',
-                    'uploaded': result["uploaded"],
-                    'failed': result["failed"]
-                },
-                status=status_code
-            )
+#             uploaded_count = len(result["uploaded"])
+#             failed_count = len(result["failed"])
+            
+#             duration = time.time() - start_time
+#             logger.info(
+#                 f"File upload cycle complete | user_id={request.user.id} | "
+#                 f"success={uploaded_count} | failed={failed_count} | duration={duration:.2f}s"
+#             )
 
-        except ValidationError as e:
-            detail = e.detail
-            if isinstance(detail, dict):
-                detail = {k: v[0] if isinstance(v, list) and len(v) == 1 else v for k, v in detail.items()}
-            logger.warning(f"Validation error during upload | user_id={request.user.id} | detail={detail}")
-            return Response(detail, status=status.HTTP_409_CONFLICT)
+#             # If everything failed, might want a different status code, but 207 Multi-Status or 201 with failed list is common
+#             status_code = status.HTTP_201_CREATED if uploaded_count > 0 else status.HTTP_400_BAD_REQUEST
+            
+#             return Response(
+#                 {
+#                     'message': f'{uploaded_count} file(s) uploaded, {failed_count} failed',
+#                     'uploaded': result["uploaded"],
+#                     'failed': result["failed"]
+#                 },
+#                 status=status_code
+#             )
 
-        except Exception as e:
-            logger.error(f"Unexpected error during file upload | user_id={request.user.id} | error={str(e)}")
-            return Response({'error': 'An unexpected error occurred during upload.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+#         except ValidationError as e:
+#             detail = e.detail
+#             if isinstance(detail, dict):
+#                 detail = {k: v[0] if isinstance(v, list) and len(v) == 1 else v for k, v in detail.items()}
+#             logger.warning(f"Validation error during upload | user_id={request.user.id} | detail={detail}")
+#             return Response(detail, status=status.HTTP_409_CONFLICT)
+
+#         except Exception as e:
+#             logger.error(f"Unexpected error during file upload | user_id={request.user.id} | error={str(e)}")
+#             return Response({'error': 'An unexpected error occurred during upload.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 class FileDownloadView(APIView):
     permission_classes=[IsAuthenticated]
     def get(self, request, file_id):
@@ -555,7 +590,7 @@ class FileViewInlineView(APIView):
     """
     Serves the file content for inline viewing in the browser.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
     def get(self, request, file_id):
         return FileService.view_file_inline(request.user, file_id)
     
@@ -567,7 +602,7 @@ class DefaultPageNumberPagination(PageNumberPagination):
 
   
 class FileListView(APIView):
-  permission_classes = [IsAuthenticated]
+  permission_classes = [IsActiveAccount]
   serializer_class = FilesListSerializer
   pagination_class = DefaultPageNumberPagination
   def get(self, request):
@@ -586,7 +621,7 @@ class FileListView(APIView):
   
 class FileDetailView(APIView):
   
-  permission_classes = [IsAuthenticated]
+  permission_classes = [IsActiveAccount]
   serializer_class = FilesListSerializer
 
   def get(self, request, pk):
@@ -606,7 +641,7 @@ class FileDetailView(APIView):
         return Response(serializer.data, status=status.HTTP_200_OK)
     
 class FileUpdateView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
     serializer_class = FileUpdateSerializer
     def patch(self, request, pk):
         """
@@ -696,7 +731,7 @@ class BulkFileDeleteView(APIView):
     """
     View for bulk deleting multiple files.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def post(self, request):
         file_ids = request.data.get('file_ids', [])
@@ -726,7 +761,7 @@ class BulkRestoreFileView(APIView):
     """
     View for bulk restoring multiple files from trash.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def post(self, request):
         file_ids = request.data.get('file_ids', [])
@@ -743,7 +778,7 @@ class EmptyTrashView(APIView):
     """
     View for permanently clearing all files in trash for the authenticated user.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def delete(self, request):
         try:
@@ -755,7 +790,7 @@ class BulkUnarchiveFileView(APIView):
     """
     View for bulk unarchiving multiple files.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def post(self, request):
         file_ids = request.data.get('file_ids', [])
@@ -836,7 +871,7 @@ class BulkFileArchiveView(APIView):
     """
     View for bulk archiving multiple files.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def post(self, request):
         file_ids = request.data.get('file_ids', [])
@@ -920,7 +955,7 @@ class RecentView(APIView):
         }, status=status.HTTP_200_OK)
 
 class FileShareCreateListUpdateView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def post(self, request, file_id):
         serializer=FileShareCreateSerializer(data=request.data, context={'request': request}
@@ -1003,7 +1038,7 @@ import traceback
 
 class BulkFileShareView(APIView):
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def post(self, request):
 
@@ -1076,7 +1111,7 @@ class BulkFileShareView(APIView):
 
 
 class FileShareScheduleCreateListView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def post(self, request, file_id):
         serializer = FileShareCreateSerializer(
@@ -1144,7 +1179,7 @@ class FileShareScheduleCreateListView(APIView):
         )
         
 class FileShareScheduleCalendarView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def get(self, request):
         try:
@@ -1182,7 +1217,7 @@ class FileShareScheduleCalendarView(APIView):
         )
 
 class RevokeScheduledMailView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def post(self, request, mail_id):   
         try:
@@ -1204,12 +1239,57 @@ class PublicFileAccessView(APIView):
     permission_classes = []
 
     def get(self, request, token):
+        from django.http import Http404
         try:
             share = ViewFileShareService.get_share_or_404(token)
+        except Http404:
+            return Response({'error': 'Share link not found or deleted.'}, status=status.HTTP_404_NOT_FOUND)
         except ValueError as e:
-            return Response({'error': str(e)}, status=status.HTTP_403_FORBIDDEN)
+            error_msg = str(e)
+            status_code = status.HTTP_403_FORBIDDEN
+            if 'expired' in error_msg.lower():
+                status_code = status.HTTP_410_GONE
+            return Response({'error': error_msg}, status=status_code)
 
-        ViewFileShareService.increment_access_counts(share)
+        action = request.query_params.get('action')
+        if not action:
+            # Return JSON metadata for initial verification & rendering
+            owner = share.owner
+            sender_name = owner.get_full_name() or owner.email
+            sender_email = owner.email
+
+            is_bundle = getattr(share, 'is_bundle', False)
+            if not is_bundle and hasattr(share, 'file') and share.file:
+                file_name = share.file.original_name
+                file_size = share.file.file_size
+                content_type = share.file.content_type
+                accessed = getattr(share, 'accessed', False)
+            else:
+                bundle_obj = getattr(share, 'bundle', None) or share
+                file_name = getattr(bundle_obj, 'title', '') or "Bulk Share Package"
+                file_size = sum(item.file.file_size for item in bundle_obj.items.all()) if hasattr(bundle_obj, 'items') else 0
+                content_type = "application/zip"
+                accessed = getattr(share, 'accessed', False) if not isinstance(share, ShareBundle) else (share.download_count > 0)
+
+            return Response({
+                'file_name': file_name,
+                'file_size': file_size,
+                'content_type': content_type,
+                'sender': sender_name,
+                'sender_name': sender_name,
+                'sender_email': sender_email,
+                'expiration': share.expiration_datetime,
+                'expiration_datetime': share.expiration_datetime,
+                'permission': share.permission,
+                'accessed': accessed,
+                'view_limit': share.view_limit,
+                'view_count': share.view_count,
+                'download_limit': share.download_limit,
+                'download_count': share.download_count,
+            }, status=status.HTTP_200_OK)
+
+        # Increment access count and return file only when action is requested
+        ViewFileShareService.increment_access_counts(share, action)
         
         if share.is_bundle:
             file_obj, filename = ViewFileShareService.get_zip_response(share)
@@ -1253,7 +1333,7 @@ class PublicFileVerifyView(APIView):
         })
             
 class CollectionListCreateView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def get(self, request):
         logger.info(f"Fetching collections | user_id={request.user.id}")
@@ -1309,7 +1389,7 @@ class CollectionListCreateView(APIView):
 
 
 class CollectionDetailView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def get(self, request, collection_id):
         try:
@@ -1342,7 +1422,7 @@ class CollectionDetailView(APIView):
 
 
 class CollectionFileView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
     serializer_class = CollectionFileSerializer
     pagination_class = DefaultPageNumberPagination
     
@@ -1402,7 +1482,7 @@ from datetime import datetime
 
 
 class ReportDownloadView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
     pagination_class = DefaultPageNumberPagination 
 
     def get(self, request):
@@ -1446,7 +1526,7 @@ class ReportDownloadView(APIView):
 
 class StorageSummaryView(APIView):
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def get(self, request):
 
@@ -1463,7 +1543,7 @@ class StorageSummaryView(APIView):
 
 
 class DashboardView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def get(self, request):
         from files.services import DashboardClass
@@ -1503,7 +1583,7 @@ class DashboardView(APIView):
         return Response(response_data, status=status.HTTP_200_OK)
     
 class StorageManagementView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
     pagination_class = DefaultPageNumberPagination
 
     def get(self, request):
@@ -1528,7 +1608,7 @@ class StorageManagementView(APIView):
         return paginator.get_paginated_response(serializer.data)
 
 class StoragePermanentDeleteView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def post(self, request):
         from files.services import StorageManagementService
@@ -1585,13 +1665,13 @@ from .serializers import (
     ThreadSerializer,
     ProjectStageSerializer,
 )
-from .services import DependencyService, FileService, NodeService, ThreadService
+from .services import DependencyService, FileService, NodeService, ThreadService, StageService
 
 
 # ─── Thread ───────────────────────────────────────────────────────────────────
 
 class ThreadListCreateView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def get(self, request):
         threads = ProjectThread.objects.filter(created_by=request.user)
@@ -1605,7 +1685,7 @@ class ThreadListCreateView(APIView):
 
 
 class ThreadDetailView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def _get_thread(self, pk, user):
         try:
@@ -1638,7 +1718,7 @@ class ThreadDetailView(APIView):
 
 class ThreadGraphView(APIView):
     """Returns all nodes + edges shaped for ReactFlow."""
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def get(self, request, pk):
         try:
@@ -1655,7 +1735,7 @@ class ThreadGraphView(APIView):
 
 
 class ThreadStageListCreateView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def get(self, request, thread_id):
         try:
@@ -1675,11 +1755,13 @@ class ThreadStageListCreateView(APIView):
         serializer = ProjectStageSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         stage = serializer.save(thread=thread)
-        return Response(ProjectStageSerializer(stage).data, status=status.HTTP_201_CREATED)
+        data = ProjectStageSerializer(stage).data
+        data["detail"] = f'Stage "{stage.name}" created successfully.'
+        return Response(data, status=status.HTTP_201_CREATED)
 
 
 class ThreadStageDetailView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def _get_stage(self, pk, user):
         try:
@@ -1694,22 +1776,34 @@ class ThreadStageDetailView(APIView):
         
         serializer = ProjectStageSerializer(stage, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
-        serializer.save()
-        return Response(serializer.data)
+        stage = serializer.save()
+        data = serializer.data
+        data["detail"] = f'Stage "{stage.name}" renamed successfully.'
+        return Response(data)
 
     def delete(self, request, pk):
         stage = self._get_stage(pk, request.user)
         if not stage:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
-            
-        stage.delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
+
+        try:
+            name = StageService.delete_stage(stage, request.user)
+        except DRFValidationError as e:
+            detail = e.detail.get("detail") if isinstance(e.detail, dict) else e.detail
+            if isinstance(detail, list):
+                detail = detail[0]
+            return Response({"detail": detail}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(
+            {"detail": f'Stage "{name}" deleted successfully.'},
+            status=status.HTTP_200_OK,
+        )
 
 
 # ─── Node ─────────────────────────────────────────────────────────────────────
 
 class NodeListCreateView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def _get_thread(self, thread_id, user):
         try:
@@ -1731,11 +1825,13 @@ class NodeListCreateView(APIView):
         serializer = NodeCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         node = NodeService.add_node(thread, request.user, serializer.validated_data)
-        return Response(NodeSerializer(node).data, status=status.HTTP_201_CREATED)
+        data = NodeSerializer(node).data
+        data["detail"] = f'Node "{node.title}" created successfully.'
+        return Response(data, status=status.HTTP_201_CREATED)
 
 
 class NodeDetailView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def _get_node(self, pk, user):
         try:
@@ -1756,19 +1852,30 @@ class NodeDetailView(APIView):
         serializer = NodeUpdateSerializer(data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         node = NodeService.update_node(node, request.user, serializer.validated_data)
-        return Response(NodeSerializer(node).data)
+        data = NodeSerializer(node).data
+        data["detail"] = f'Node "{node.title}" updated successfully.'
+        return Response(data)
 
     def delete(self, request, pk):
         node = self._get_node(pk, request.user)
         if not node:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
-        NodeService.soft_delete(node, request.user)
-        return Response({"detail": "Node archived."}, status=status.HTTP_200_OK)
+        try:
+            NodeService.soft_delete(node, request.user)
+        except DRFValidationError as e:
+            detail = e.detail.get("detail") if isinstance(e.detail, dict) else e.detail
+            if isinstance(detail, list):
+                detail = detail[0]
+            return Response({"detail": detail}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(
+            {"detail": f'Node "{node.title}" archived successfully.'},
+            status=status.HTTP_200_OK,
+        )
 
 
 class NodeBranchView(APIView):
     """POST /api/nodes/<id>/branch/ — create a branch diverging from this node."""
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def post(self, request, pk):
         try:
@@ -1784,7 +1891,7 @@ class NodeBranchView(APIView):
 
 class NodePositionView(APIView):
     """PATCH /api/nodes/<id>/position/ — update canvas position after drag."""
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def patch(self, request, pk):
         try:
@@ -1804,7 +1911,7 @@ class NodePositionView(APIView):
 # ─── Dependencies ─────────────────────────────────────────────────────────────
 
 class DependencyListCreateView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def get(self, request, node_id):
         try:
@@ -1842,11 +1949,13 @@ class DependencyListCreateView(APIView):
         except Exception as e:
              return Response({"detail": f"Dependency error: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
 
-        return Response(DependencySerializer(dep).data, status=status.HTTP_201_CREATED)
+        data = DependencySerializer(dep).data
+        data["detail"] = "Connection created successfully."
+        return Response(data, status=status.HTTP_201_CREATED)
 
 
 class DependencyDetailView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def patch(self, request, pk):
         try:
@@ -1866,7 +1975,9 @@ class DependencyDetailView(APIView):
         except Exception as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
             
-        return Response(DependencySerializer(dep).data)
+        data = DependencySerializer(dep).data
+        data["detail"] = "Connection updated successfully."
+        return Response(data)
 
     def delete(self, request, pk):
         try:
@@ -1874,13 +1985,13 @@ class DependencyDetailView(APIView):
         except NodeDependency.DoesNotExist:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
         DependencyService.remove_dependency(dep, request.user)
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        return Response({"detail": "Connection removed successfully."}, status=status.HTTP_200_OK)
 
 
 # ─── Files ────────────────────────────────────────────────────────────────────
 
 class NodeFileListCreateView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def get(self, request, node_id):
         try:
@@ -1899,28 +2010,31 @@ class NodeFileListCreateView(APIView):
         serializer = NodeFileUploadSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         node_file = FileService.upload(node, request.user, serializer.validated_data["file"])
-        return Response(
-            NodeFileSerializer(node_file, context={"request": request}).data,
-            status=status.HTTP_201_CREATED,
-        )
+        data = NodeFileSerializer(node_file, context={"request": request}).data
+        data["detail"] = f'"{node_file.original_name}" uploaded successfully.'
+        return Response(data, status=status.HTTP_201_CREATED)
 
 
 class NodeFileDetailView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def delete(self, request, pk):
         try:
             node_file = NodeFile.objects.get(pk=pk, node__thread__created_by=request.user)
         except NodeFile.DoesNotExist:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        name = node_file.original_name
         FileService.delete_file(node_file, request.user)
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        return Response(
+            {"detail": f'"{name}" removed from the node successfully.'},
+            status=status.HTTP_200_OK,
+        )
 
 
 # ─── Activity ─────────────────────────────────────────────────────────────────
 
 class NodeActivityView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def get(self, request, node_id):
         try:

@@ -6,11 +6,11 @@ User = get_user_model()
 
 class AdminUserListSerializer(serializers.ModelSerializer):
     total_files_uploaded = serializers.SerializerMethodField()
-
+    designation_display = serializers.SerializerMethodField()
     class Meta:
         model = User
         fields = [
-            'id', 'email', 'first_name', 'last_name', 'designation', 
+            'id', 'email', 'first_name', 'last_name', 'designation_display', 
             'account_status', 'is_staff', 'is_superuser', 'is_active', 
             'storage_limit_bytes', 'storage_used_bytes', 'date_joined',
             'last_login', 'total_files_uploaded'
@@ -18,6 +18,9 @@ class AdminUserListSerializer(serializers.ModelSerializer):
 
     def get_total_files_uploaded(self, obj):
         return obj.files.filter(is_deleted=False).count()
+
+    def get_designation_display(self, obj):
+        return obj.designation.name if obj.designation_id else ""
 
 
 from .models import Designation
@@ -43,8 +46,8 @@ class DesignationSerializer(serializers.ModelSerializer):
 class DesignationChangeRequestSerializer(serializers.ModelSerializer):
     user_email = serializers.EmailField(source='user.email', read_only=True)
     user_full_name = serializers.SerializerMethodField()
-    current_designation_display = serializers.CharField(source='get_current_designation_display', read_only=True)
-    requested_designation_display = serializers.CharField(source='get_requested_designation_display', read_only=True)
+    current_designation_display = serializers.CharField(source='current_designation.name', read_only=True)
+    requested_designation_display = serializers.CharField(source='requested_designation.name', read_only=True)
     resolved_by_email = serializers.EmailField(source='resolved_by.email', read_only=True)
 
     class Meta:

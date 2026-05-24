@@ -32,14 +32,6 @@ class UserManager(BaseUserManager):
         return self.create_user(email=email, password=password, **extra_fields)
 class User(AbstractUser):
 
-    class DesignationChoices(models.TextChoices):
-        PROJECT_MANAGER = "project_manager", "Project Manager"
-        TEAM_LEAD = "team_lead", "Team Lead"
-        DELIVERY_MANAGER = "delivery_manager", "Delivery Manager"
-        PRODUCT_MANAGER = "product_manager", "Product Manager"
-        OPERATIONS_MANAGER = "operations_manager", "Operations Manager"
-        PROGRAM_MANAGER = "program_manager", "Program Manager"
-
     class AccountStatus(models.TextChoices):
         WAITING_FOR_APPROVAL = "Waiting For Approval", "Waiting For Approval"
         ACTIVE = "active", "Active"
@@ -52,10 +44,12 @@ class User(AbstractUser):
     email = models.EmailField(unique=True)
     date_of_birth = models.DateField(null=True, blank=True)
 
-    designation = models.CharField(
-        max_length=20,
-        choices=DesignationChoices.choices,
-        default=DesignationChoices.PROJECT_MANAGER
+    designation = models.ForeignKey(
+        "administration.Designation",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="users",
     )
     account_status = models.CharField(
         max_length=20,
@@ -118,6 +112,49 @@ class File(models.Model):
     @property
     def is_expired(self):
         return timezone.now() >= self.expires_at
+
+
+class ChunkUploadSession(models.Model):
+    """Tracks in-progress chunked uploads for pause, resume, and retry."""
+
+    class Status(models.TextChoices):
+        UPLOADING = "uploading", "Uploading"
+        PAUSED = "paused", "Paused"
+        COMPLETED = "completed", "Completed"
+        FAILED = "failed", "Failed"
+        CANCELLED = "cancelled", "Cancelled"
+
+    upload_id = models.CharField(max_length=128, unique=True, db_index=True)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="chunk_upload_sessions",
+    )
+    file_name = models.CharField(max_length=255)
+    file_size = models.BigIntegerField()
+    content_type = models.CharField(max_length=100)
+    total_chunks = models.PositiveIntegerField()
+    chunks_received = models.JSONField(default=list)
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.UPLOADING,
+    )
+    description = models.CharField(max_length=255, blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    expires_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "chunk_upload_sessions"
+        indexes = [
+            models.Index(fields=["user", "status"]),
+            models.Index(fields=["expires_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.upload_id} ({self.status})"
+
 
 class FileShareLink(models.Model):
     id=models.UUIDField(
@@ -354,13 +391,15 @@ class DesignationChangeRequest(models.Model):
         related_name="designation_change_requests"
     )
 
-    current_designation = models.CharField(
-        max_length=20,
-        choices=User.DesignationChoices.choices
+    current_designation = models.ForeignKey(
+        "administration.Designation",
+        on_delete=models.PROTECT,
+        related_name="designation_changes_from",
     )
-    requested_designation = models.CharField(
-        max_length=20,
-        choices=User.DesignationChoices.choices
+    requested_designation = models.ForeignKey(
+        "administration.Designation",
+        on_delete=models.PROTECT,
+        related_name="designation_changes_to",
     )
 
     status = models.CharField(
@@ -387,7 +426,9 @@ class DesignationChangeRequest(models.Model):
         ordering = ["-created_at"]
 
     def __str__(self):
-        return f"{self.user.email}: {self.current_designation} → {self.requested_designation} [{self.status}]"
+        current = self.current_designation.name if self.current_designation_id else "—"
+        requested = self.requested_designation.name if self.requested_designation_id else "—"
+        return f"{self.user.email}: {current} → {requested} [{self.status}]"
 
 
 #threads

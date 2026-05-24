@@ -95,23 +95,23 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.mysql',
-        'NAME': 'fileshare_db',
-        'HOST':'localhost',
-        'PASSWORD':'12345678',
-        'USER':'root',
-        'PORT':'3306'
-    }
-}
 # DATABASES = {
 #     'default': {
-#         'ENGINE': 'django.db.backends.sqlite3',
-#         'NAME': BASE_DIR / 'db.sqlite3',
-        
+#         'ENGINE': 'django.db.backends.mysql',
+#         'NAME': 'fileshare_db',
+#         'HOST':'localhost',
+#         'PASSWORD':'12345678',
+#         'USER':'root',
+#         'PORT':'3306'
 #     }
 # }
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.sqlite3',
+        'NAME': BASE_DIR / 'db.sqlite3',
+        
+    }
+}
 
 
 # Password validation
@@ -155,7 +155,7 @@ REST_FRAMEWORK = {
         "files.authentication.CookieJWTAuthentication",
     ),
     "DEFAULT_PERMISSION_CLASSES": (
-        "rest_framework.permissions.IsAuthenticated",
+        "files.permissions.IsActiveAccount",
     ),
 }
 from datetime import timedelta
@@ -184,7 +184,7 @@ EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD")
 DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL")
 
 BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL")
-FRONTEND_URL=os.getenv("FRONTEND_URL")
+FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL") 
 LOGS_DIR = BASE_DIR / "logs"
 os.makedirs(LOGS_DIR, exist_ok=True)
 
