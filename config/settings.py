@@ -155,7 +155,7 @@ REST_FRAMEWORK = {
         "files.authentication.CookieJWTAuthentication",
     ),
     "DEFAULT_PERMISSION_CLASSES": (
-        "rest_framework.permissions.IsAuthenticated",
+        "files.permissions.IsActiveAccount",
     ),
 }
 from datetime import timedelta

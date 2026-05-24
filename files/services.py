@@ -124,7 +124,7 @@ class AuthService:
         token = default_token_generator.make_token(user)
 
         reset_url = (
-        f"{settings.FRONTEND_URL}"
+        f"{settings.FRONTEND_BASE_URL}"
         f"/auth/reset-password/confirm/"
         f"?uid={uid}&token={token}"
     )

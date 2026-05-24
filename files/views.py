@@ -24,6 +24,9 @@ from files.authentication import CookieJWTAuthentication
 from files.exceptions import StorageLimitExceeded
 from django.db.models import F, Sum, Q
 from rest_framework import serializers
+from .permissions import IsActiveAccount
+
+
 import logging
 logger = logging.getLogger(__name__)
 
@@ -221,7 +224,7 @@ class ResetPasswordView(APIView):
             status=status.HTTP_200_OK,
         )
 class UserProfileView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
     serializer_class = UserProfileSerializer
 
     def get(self, request) -> Response:
@@ -255,7 +258,7 @@ class ChangePasswordView(APIView):
             )
 
 class DeactivateAccountView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
     serializer_class = DeactivateAccountSerializer
 
     def post(self, request):
@@ -318,38 +321,7 @@ class ReactivationRequestView(APIView):
             status=status.HTTP_201_CREATED
         )
 
-class ReactivationResolveView(APIView):
-    authentication_classes = [CookieJWTAuthentication]
-    permission_classes = [IsAdminUser]
 
-    def post(self, request, pk):
-        try:
-            # Handle both UUID and potentially older integer IDs if they exist
-            react_req = ReactivationRequest.objects.get(pk=pk)
-        except (ReactivationRequest.DoesNotExist, ValidationError):
-            return Response({"error": "Request not found or invalid ID format"}, status=status.HTTP_404_NOT_FOUND)
-
-        action = request.data.get('action')
-        user_id = request.data.get('user_id')
-
-        # Optional: Verify user_id consistency if provided
-        if user_id and react_req.user.id != int(user_id):
-            return Response({"error": "User ID mismatch"}, status=status.HTTP_400_BAD_REQUEST)
-        
-        if action == 'approve':
-            user = react_req.user
-            user.account_status = 'ACTIVE'
-            user.is_active = True
-            user.save()
-            react_req.is_resolved = True
-            react_req.save()
-            return Response({"message": "Account reactivated successfully"})
-        elif action == 'reject':
-            react_req.is_resolved = True
-            react_req.save()
-            return Response({"message": "Reactivation request rejected. Status remains deactivated."})
-        
-        return Response({"error": "Invalid action"}, status=status.HTTP_400_BAD_REQUEST)
 
 
 class DesignationChangeRequestView(APIView):
@@ -357,7 +329,7 @@ class DesignationChangeRequestView(APIView):
     GET  /api/designation-change/   — list the authenticated user's own requests
     POST /api/designation-change/   — submit a new designation change request
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
  
     def get(self, request):
         requests = UserProfileService.get_user_designation_requests(user=request.user)
@@ -420,7 +392,7 @@ import time
 from rest_framework.exceptions import ValidationError
 
 class ChunkUploadView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def post(self, request):
         payload = {
@@ -544,7 +516,7 @@ class ChunkUploadView(APIView):
 
 class ChunkUploadStatusView(APIView):
     """GET upload progress and which chunks are already on the server."""
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def get(self, request):
         serializer = ChunkUploadStatusQuerySerializer(
@@ -564,7 +536,7 @@ class ChunkUploadStatusView(APIView):
 
 class ChunkUploadControlView(APIView):
     """POST pause, resume, or cancel an in-progress upload."""
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def post(self, request):
         serializer = ChunkUploadControlSerializer(data=request.data)
@@ -586,7 +558,7 @@ class ChunkUploadControlView(APIView):
             return Response(e.detail, status=status.HTTP_404_NOT_FOUND)
 
 # class FileUploadView(APIView):
-#     permission_classes = [IsAuthenticated]
+#     permission_classes = [IsActiveAccount]
 
 #     def post(self, request):
 #         start_time = time.time()
@@ -651,7 +623,7 @@ class FileViewInlineView(APIView):
     """
     Serves the file content for inline viewing in the browser.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
     def get(self, request, file_id):
         return FileService.view_file_inline(request.user, file_id)
     
@@ -663,7 +635,7 @@ class DefaultPageNumberPagination(PageNumberPagination):
 
   
 class FileListView(APIView):
-  permission_classes = [IsAuthenticated]
+  permission_classes = [IsActiveAccount]
   serializer_class = FilesListSerializer
   pagination_class = DefaultPageNumberPagination
   def get(self, request):
@@ -682,7 +654,7 @@ class FileListView(APIView):
   
 class FileDetailView(APIView):
   
-  permission_classes = [IsAuthenticated]
+  permission_classes = [IsActiveAccount]
   serializer_class = FilesListSerializer
 
   def get(self, request, pk):
@@ -702,7 +674,7 @@ class FileDetailView(APIView):
         return Response(serializer.data, status=status.HTTP_200_OK)
     
 class FileUpdateView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
     serializer_class = FileUpdateSerializer
     def patch(self, request, pk):
         """
@@ -792,7 +764,7 @@ class BulkFileDeleteView(APIView):
     """
     View for bulk deleting multiple files.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def post(self, request):
         file_ids = request.data.get('file_ids', [])
@@ -822,7 +794,7 @@ class BulkRestoreFileView(APIView):
     """
     View for bulk restoring multiple files from trash.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def post(self, request):
         file_ids = request.data.get('file_ids', [])
@@ -839,7 +811,7 @@ class EmptyTrashView(APIView):
     """
     View for permanently clearing all files in trash for the authenticated user.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def delete(self, request):
         try:
@@ -851,7 +823,7 @@ class BulkUnarchiveFileView(APIView):
     """
     View for bulk unarchiving multiple files.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def post(self, request):
         file_ids = request.data.get('file_ids', [])
@@ -932,7 +904,7 @@ class BulkFileArchiveView(APIView):
     """
     View for bulk archiving multiple files.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def post(self, request):
         file_ids = request.data.get('file_ids', [])
@@ -1016,7 +988,7 @@ class RecentView(APIView):
         }, status=status.HTTP_200_OK)
 
 class FileShareCreateListUpdateView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def post(self, request, file_id):
         serializer=FileShareCreateSerializer(data=request.data, context={'request': request}
@@ -1099,7 +1071,7 @@ import traceback
 
 class BulkFileShareView(APIView):
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def post(self, request):
 
@@ -1172,7 +1144,7 @@ class BulkFileShareView(APIView):
 
 
 class FileShareScheduleCreateListView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def post(self, request, file_id):
         serializer = FileShareCreateSerializer(
@@ -1240,7 +1212,7 @@ class FileShareScheduleCreateListView(APIView):
         )
         
 class FileShareScheduleCalendarView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def get(self, request):
         try:
@@ -1278,7 +1250,7 @@ class FileShareScheduleCalendarView(APIView):
         )
 
 class RevokeScheduledMailView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def post(self, request, mail_id):   
         try:
@@ -1394,7 +1366,7 @@ class PublicFileVerifyView(APIView):
         })
             
 class CollectionListCreateView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def get(self, request):
         logger.info(f"Fetching collections | user_id={request.user.id}")
@@ -1450,7 +1422,7 @@ class CollectionListCreateView(APIView):
 
 
 class CollectionDetailView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def get(self, request, collection_id):
         try:
@@ -1483,7 +1455,7 @@ class CollectionDetailView(APIView):
 
 
 class CollectionFileView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
     serializer_class = CollectionFileSerializer
     pagination_class = DefaultPageNumberPagination
     
@@ -1543,7 +1515,7 @@ from datetime import datetime
 
 
 class ReportDownloadView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
     pagination_class = DefaultPageNumberPagination 
 
     def get(self, request):
@@ -1587,7 +1559,7 @@ class ReportDownloadView(APIView):
 
 class StorageSummaryView(APIView):
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def get(self, request):
 
@@ -1604,7 +1576,7 @@ class StorageSummaryView(APIView):
 
 
 class DashboardView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def get(self, request):
         from files.services import DashboardClass
@@ -1644,7 +1616,7 @@ class DashboardView(APIView):
         return Response(response_data, status=status.HTTP_200_OK)
     
 class StorageManagementView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
     pagination_class = DefaultPageNumberPagination
 
     def get(self, request):
@@ -1669,7 +1641,7 @@ class StorageManagementView(APIView):
         return paginator.get_paginated_response(serializer.data)
 
 class StoragePermanentDeleteView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def post(self, request):
         from files.services import StorageManagementService
@@ -1732,7 +1704,7 @@ from .services import DependencyService, FileService, NodeService, ThreadService
 # ─── Thread ───────────────────────────────────────────────────────────────────
 
 class ThreadListCreateView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def get(self, request):
         threads = ProjectThread.objects.filter(created_by=request.user)
@@ -1746,7 +1718,7 @@ class ThreadListCreateView(APIView):
 
 
 class ThreadDetailView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def _get_thread(self, pk, user):
         try:
@@ -1779,7 +1751,7 @@ class ThreadDetailView(APIView):
 
 class ThreadGraphView(APIView):
     """Returns all nodes + edges shaped for ReactFlow."""
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def get(self, request, pk):
         try:
@@ -1796,7 +1768,7 @@ class ThreadGraphView(APIView):
 
 
 class ThreadStageListCreateView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def get(self, request, thread_id):
         try:
@@ -1820,7 +1792,7 @@ class ThreadStageListCreateView(APIView):
 
 
 class ThreadStageDetailView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def _get_stage(self, pk, user):
         try:
@@ -1850,7 +1822,7 @@ class ThreadStageDetailView(APIView):
 # ─── Node ─────────────────────────────────────────────────────────────────────
 
 class NodeListCreateView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def _get_thread(self, thread_id, user):
         try:
@@ -1876,7 +1848,7 @@ class NodeListCreateView(APIView):
 
 
 class NodeDetailView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def _get_node(self, pk, user):
         try:
@@ -1909,7 +1881,7 @@ class NodeDetailView(APIView):
 
 class NodeBranchView(APIView):
     """POST /api/nodes/<id>/branch/ — create a branch diverging from this node."""
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def post(self, request, pk):
         try:
@@ -1925,7 +1897,7 @@ class NodeBranchView(APIView):
 
 class NodePositionView(APIView):
     """PATCH /api/nodes/<id>/position/ — update canvas position after drag."""
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def patch(self, request, pk):
         try:
@@ -1945,7 +1917,7 @@ class NodePositionView(APIView):
 # ─── Dependencies ─────────────────────────────────────────────────────────────
 
 class DependencyListCreateView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def get(self, request, node_id):
         try:
@@ -1987,7 +1959,7 @@ class DependencyListCreateView(APIView):
 
 
 class DependencyDetailView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def patch(self, request, pk):
         try:
@@ -2021,7 +1993,7 @@ class DependencyDetailView(APIView):
 # ─── Files ────────────────────────────────────────────────────────────────────
 
 class NodeFileListCreateView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def get(self, request, node_id):
         try:
@@ -2047,7 +2019,7 @@ class NodeFileListCreateView(APIView):
 
 
 class NodeFileDetailView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def delete(self, request, pk):
         try:
@@ -2061,7 +2033,7 @@ class NodeFileDetailView(APIView):
 # ─── Activity ─────────────────────────────────────────────────────────────────
 
 class NodeActivityView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveAccount]
 
     def get(self, request, node_id):
         try:
