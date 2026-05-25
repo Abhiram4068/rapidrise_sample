@@ -12,7 +12,7 @@ from django.http import FileResponse
 from django.core.exceptions import ValidationError, PermissionDenied
 from files.serializers import (
     RegisterSerializer, LoginSerializer, UserProfileSerializer,ChangePasswordSerialzier, DeactivateAccountSerializer, ChunkUploadSerializer, ChunkUploadStatusQuerySerializer, ChunkUploadControlSerializer, FilesListSerializer, FileUpdateSerializer ,FileShareSerializer, FileShareCreateSerializer, PublicFileSerializer,CollectionSerializer, CollectionFileSerializer
-    ,ScheduledMailSerializer, FileShareListSerializer, ReportQuerySerializer, DesignationSerializer, ResetPasswordSerializer, ForgotPasswordSerializer, ReactivationRequestSerializer, DesignationChangeRequestListSerializer, DesignationChangeRequestCreateSerializer, DesignationChangeRequestAdminSerializer
+    ,ScheduledMailSerializer, FileShareListSerializer, ReportQuerySerializer, ToggleMonthlyReportSerializer, DesignationSerializer, ResetPasswordSerializer, ForgotPasswordSerializer, ReactivationRequestSerializer, DesignationChangeRequestListSerializer, DesignationChangeRequestCreateSerializer, DesignationChangeRequestAdminSerializer
     )
 from files.models import ReactivationRequest, DesignationChangeRequest, ChunkUploadSession
 from files.services import (
@@ -1494,6 +1494,7 @@ class ReportDownloadView(APIView):
         download = serializer.validated_data.get("download")
         timeline = serializer.validated_data.get("timeline")
         search = serializer.validated_data.get("search", "")
+        is_toggle = serializer.validated_data.get("is_toggle")
 
         # Fetch data
         shares, mails = ReportService.get_queryset(request.user, timeline, search)
@@ -1519,10 +1520,25 @@ class ReportDownloadView(APIView):
 
         paginated_response = paginator.get_paginated_response(page)
         paginated_response.data["dashboard"] = dashboard
+        paginated_response.data["is_toggle"] = request.user.monthly_report_enabled
 
         return paginated_response
 
+class ToggleMonthlyReportView(APIView):
+    permission_classes = [IsAuthenticated]
 
+    def patch(self, request):
+        serializer = ToggleMonthlyReportSerializer(
+            request.user,
+            data={'monthly_report_enabled': not request.user.monthly_report_enabled},
+            partial=True
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response({
+            'monthly_report_enabled': serializer.instance.monthly_report_enabled,
+            'detail': f"Monthly reports {'enabled' if serializer.instance.monthly_report_enabled else 'disabled'}."
+        })
 
 class StorageSummaryView(APIView):
 

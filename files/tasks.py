@@ -96,10 +96,11 @@ def auto_generate_report():
     from .models import File
     
     User = get_user_model()
-    
+    users = User.objects.filter(account_status=User.AccountStatus.ACTIVE, monthly_report_enabled=True)
     print("[REPORT_GEN_V2] Starting monthly report generation...")
     
-    for user in User.objects.filter(is_active=True):
+    for user in users:
+        print(f"Users found for reports: {user.email}")
         try:
             print(f"Generating report for: {user.email}")
             
@@ -141,3 +142,21 @@ def auto_generate_report():
             
         except Exception as e:
             print(f"Failed for {user.email}: {e}")
+
+
+@shared_task
+def auto_delete_users():
+    from django.contrib.auth import get_user_model
+    User = get_user_model()
+
+    threshold_date = timezone.now() - timedelta(minutes=1)
+    deleted_users = User.objects.filter(
+        account_status=User.AccountStatus.DELETED,
+        deleted_at__lte=threshold_date
+    )
+    count = deleted_users.count()
+    for user in deleted_users:
+        email = user.email
+        user.delete()
+        print(f"Permanently deleted user: {email}")
+    return f"Permanently deleted {count} users"

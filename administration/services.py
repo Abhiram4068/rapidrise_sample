@@ -4,9 +4,11 @@ from django.contrib.auth import get_user_model
 from django.core.mail import send_mail
 from django.conf import settings
 from .models import Designation
+from files.models import ReactivationRequest
 from django.shortcuts import get_object_or_404
 import logging
 logger = logging.getLogger(__name__)
+import threading
 
 User = get_user_model()
 
@@ -39,15 +41,15 @@ class AdminUserService:
                 try:
                     send_mail(
                         subject="Your Account has been UNBLOCKED",
-message=( f"Hi {user.first_name},\n\n" "Your HiveDrive account has been reviewed and the suspension has been revoked by the administrator. " "Your account access has now been fully restored.\n\n" "You can log in and continue using the platform normally.\n\n" "Regards,\n" "HiveDrive Administration Team" ),    
-                    from_email=settings.DEFAULT_FROM_EMAIL,
+                            message=( f"Hi {user.first_name},\n\n" "Your HiveDrive account has been reviewed and the suspension has been revoked by the administrator. " "Your account access has now been fully restored.\n\n" "You can log in and continue using the platform normally.\n\n" "Regards,\n" "HiveDrive Administration Team" ),    
+                        from_email=settings.DEFAULT_FROM_EMAIL,
                         recipient_list=[user.email],
                         fail_silently=False,
                     )
                 except Exception as e:
                     print(e)
 
-            import threading
+            
             thread = threading.Thread(target=send_email)
             thread.start()
             return user
@@ -89,8 +91,6 @@ message=( f"Hi {user.first_name},\n\n" "Your HiveDrive account has been reviewed
                     )
                 except Exception as e:
                     print(e)
-
-            import threading
             thread = threading.Thread(target=send_email)
             thread.start()
             return user
@@ -218,25 +218,134 @@ message=( f"Hi {user.first_name},\n\n" "Your HiveDrive account has been reviewed
     def resolve_designation_change_request(pk, action, admin_user):
         from files.models import DesignationChangeRequest
         try:
-            request = DesignationChangeRequest.objects.get(pk=pk, status=DesignationChangeRequest.StatusChoices.PENDING)
-            
+            request = DesignationChangeRequest.objects.select_related("user", "requested_designation").get(
+                pk=pk, status=DesignationChangeRequest.StatusChoices.PENDING
+            )
+
             if action == 'approve':
                 user = request.user
                 user.designation = request.requested_designation
-                user.save()
-                
+                user.save(update_fields=["designation"])
+
                 request.status = DesignationChangeRequest.StatusChoices.APPROVED
+                request.resolved_by = admin_user
+                request.resolved_at = timezone.now()
+                request.save(update_fields=["status", "resolved_by", "resolved_at"])
+
+                def send_approval_email():
+                    try:
+                        send_mail(
+                            subject="Your Designation Change Request Has Been Approved",
+                            message=(
+                                f"Hi {user.first_name},\n\n"
+                                "Your designation change request has been approved by the administrator.\n"
+                                f"Your designation has been updated to '{request.requested_designation}'.\n\n"
+                                "If you did not request this change, please contact support immediately.\n\n"
+                                "Thank you."
+                            ),
+                            from_email=settings.DEFAULT_FROM_EMAIL,
+                            recipient_list=[user.email],
+                            fail_silently=False,
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to send designation approval email: {e}")
+
+                threading.Thread(target=send_approval_email).start()
+
             elif action == 'reject':
+                user = request.user
+
                 request.status = DesignationChangeRequest.StatusChoices.REJECTED
+                request.resolved_by = admin_user
+                request.resolved_at = timezone.now()
+                request.save(update_fields=["status", "resolved_by", "resolved_at"])
+
+                def send_rejection_email():
+                    try:
+                        send_mail(
+                            subject="Your Designation Change Request Has Been Rejected",
+                            message=(
+                                f"Hi {user.first_name},\n\n"
+                                "We regret to inform you that your designation change request has been rejected by the administrator.\n"
+                                "Your current designation remains unchanged.\n\n"
+                                "If you believe this was a mistake or need further assistance, please contact support.\n\n"
+                                "Thank you."
+                            ),
+                            from_email=settings.DEFAULT_FROM_EMAIL,
+                            recipient_list=[user.email],
+                            fail_silently=False,
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to send designation rejection email: {e}")
+
+                threading.Thread(target=send_rejection_email).start()
+
             else:
                 raise ValueError("Invalid action. Must be 'approve' or 'reject'.")
 
-            request.resolved_by = admin_user
-            request.resolved_at = timezone.now()
-            request.save()
             return request
+
         except DesignationChangeRequest.DoesNotExist:
             raise NotFound("Designation change request not found or already resolved.")
+
+    @staticmethod
+    def resolve_new_users(pk, action):
+        try:
+            react_req = ReactivationRequest.objects.select_related("user").get(pk=pk)
+        except ReactivationRequest.DoesNotExist:
+            return None, "not_found"
+
+        if action == "approve":
+            react_req.user.account_status = User.AccountStatus.ACTIVE
+            react_req.user.save(update_fields=["account_status"])
+            react_req.is_resolved = True
+            react_req.save(update_fields=["is_resolved"])
+            def send_email():
+                try:
+                    send_mail(
+                        subject="Your Account Reactivation Request Has Been Approved",
+                        message=(
+                            f"Hi {react_req.user.first_name},\n\n"
+                            "Your account reactivation request has been approved by the administrator.\n"
+                    "Your account is now active and you can log in and continue using the platform.\n\n"
+                    "If you did not request account reactivation, please contact support immediately.\n\n"
+                    "Thank you."
+                ),
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[react_req.user.email],
+                fail_silently=False,
+                )
+                except Exception as e:
+                    logger.error(f"Failed to send reactivation approval email: {e}")
+
+            threading.Thread(target=send_email).start()
+            return react_req, "approved"
+
+        elif action == "reject":
+            react_req.is_resolved = True
+            react_req.save(update_fields=["is_resolved"])
+            def send_email():
+                try:
+                    send_mail(
+                        subject="Your Account Reactivation Request Has Been Rejected",
+                        message=(
+                            f"Hi {react_req.user.first_name},\n\n"
+                            "We regret to inform you that your account reactivation request has been rejected by the administrator.\n"
+                            "Your account will remain inactive.\n\n"
+                            "If you believe this was a mistake or need further assistance, please contact support.\n\n"
+                            "Thank you."
+                        ),
+                        from_email=settings.DEFAULT_FROM_EMAIL,
+                        recipient_list=[react_req.user.email],
+                        fail_silently=False,
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to send reactivation rejection email: {e}")
+
+            threading.Thread(target=send_email).start()
+            return react_req, "rejected"
+
+        return None, "invalid_action"
 
 class AdminDashboardService:
     @staticmethod

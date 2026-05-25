@@ -1,7 +1,7 @@
 from django.urls import path
 from files.views import (
     RegisterView, LoginView, TokenRefreshCookieView,DesignationListView, ChangePasswordView,LogoutView, ForgotPasswordView,ResetPasswordView,UserProfileView, ChunkUploadView, ChunkUploadStatusView, ChunkUploadControlView, ClearTrash, FileDownloadView, FileViewInlineView, FileListView, FileUpdateView, ArchiveFile, FileArchiveView, FileUnarchiveView,FileDetailView,FileDeleteView, FileShareCreateListUpdateView, PublicFileAccessView,
-    CollectionListCreateView, CollectionDetailView, CollectionFileView, FileStarredList, CollectionStarredList, RecentView, FileShareScheduleCreateListView, FileShareScheduleCalendarView, RevokeScheduledMailView, ReportDownloadView, ArchiveDeleteFileView, StorageSummaryView, DashboardView, StorageManagementView, StoragePermanentDeleteView,
+    CollectionListCreateView, CollectionDetailView, CollectionFileView, FileStarredList, CollectionStarredList, RecentView, FileShareScheduleCreateListView, FileShareScheduleCalendarView, RevokeScheduledMailView, ReportDownloadView, ToggleMonthlyReportView,ArchiveDeleteFileView, StorageSummaryView, DashboardView, StorageManagementView, StoragePermanentDeleteView,
     DeactivateAccountView, ReactivationRequestView, BulkFileDeleteView, BulkFileArchiveView, BulkRestoreFileView, EmptyTrashView, BulkUnarchiveFileView,
     DesignationChangeRequestView,
     BulkFileShareView
@@ -72,6 +72,7 @@ urlpatterns=[
 
     #report downloads
     path('report-downloads/', ReportDownloadView.as_view(), name='report-downloads'),
+    path('toggle-monthly-report/', ToggleMonthlyReportView.as_view(), name='toggle-monthly-report'),
 
 
     #files archive 

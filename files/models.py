@@ -59,6 +59,7 @@ class User(AbstractUser):
     storage_limit_bytes = models.BigIntegerField(default=1_073_741_824)
     storage_used_bytes = models.BigIntegerField(default=0)
     deleted_at=models.DateTimeField(null=True, blank=True)
+    monthly_report_enabled = models.BooleanField(default=False)
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = ['first_name', 'date_of_birth']
 

@@ -503,7 +503,7 @@ class ChunkUploadService:
         session = ChunkUploadService.get_session_for_user(user, upload_id)
         return ChunkUploadService.progress_payload(session)
 
-
+import magic
 class FileService:
     """
     Handles uploads with checksum-based deduplication,
@@ -990,10 +990,58 @@ class FileService:
     def get_recent_files(user):
         return File.objects.filter(user=user, is_deleted=False, is_archive=False).order_by('-last_accessed')[:9]
 
+    @staticmethod
+    def _compute_checksum(file) -> str:
+        """SHA-256 checksum of an in-memory/uploaded file. Rewinds the file pointer after reading."""
+        hasher = hashlib.sha256()
+        file.seek(0)
+        for chunk in file.chunks():
+            hasher.update(chunk)
+        file.seek(0)
+        return hasher.hexdigest()
 
+    @staticmethod
+    def vault_upload(user, file) -> File:
+        checksum = FileService._compute_checksum(file)
+        new_name=FileService._rename_file(file.name)
+        print(new_name)
+        existing = File.objects.filter(original_name=new_name,checksum=checksum, is_deleted=False).first()
+        file.seek(0)
+        
+
+        # Detect real content type via magic (same as your chunk upload validation)
+        file_bytes = file.read()
+        file.seek(0)
+        detected_type = magic.from_buffer(file_bytes[:2048], mime=True)
+
+       
+
+        if existing:
+            new_name = f"{uuid.uuid4().hex}_{file.name}"
+            # Same content already stored — point new record to a fresh copy
+            vault_file = File.objects.create(
+            user=user,
+            original_name=new_name,
+            file_size=file.size,
+            content_type=detected_type,
+            checksum=checksum,
+        )
+        else:
+            vault_file = File.objects.create(
+            user=user,
+            original_name=file.name,
+            file_size=file.size,
+            content_type=detected_type,
+            checksum=checksum,
+        )
+
+        file.seek(0)
+        return vault_file
+        
  
     @staticmethod
     def upload(node: ProjectNode, user, file) -> NodeFile:
+        vault_file = FileService.vault_upload(user, file)
         node_file = NodeFile.objects.create(
             node=node,
             file=file,
@@ -1704,11 +1752,8 @@ class ReportService:
             )
             .select_related("share", "share__file")
         )
-
-        if timeline == 'weekly':
-            shares = shares.filter(created_at__gte=timezone.now() - timedelta(days=7))
-            mails = mails.filter(sent_at__gte=timezone.now() - timedelta(days=7))
-        elif timeline == 'monthly':
+        
+        if timeline == 'monthly':
             shares = shares.filter(created_at__gte=timezone.now() - timedelta(days=31))
             mails = mails.filter(sent_at__gte=timezone.now() - timedelta(days=31))
         if search:
@@ -1760,8 +1805,9 @@ class ReportService:
     @staticmethod
     def build_response_data(shares, mails):
         """
-                Normalize + merge data
-                """
+        Normalize + merge data
+        """
+
         data = []
 
         # 🔹 Shares
@@ -1769,13 +1815,15 @@ class ReportService:
             data.append({
                 "type": "SHARES",
                 "id": str(share.id),
-                "file_name": share.file.original_name if share.file else (share.bundle.title or "Bulk Share Package"),
+                "file_name": share.file.original_name if share.file else (
+                    share.bundle.title or "Bulk Share Package"
+                ),
                 "recipient": share.recipient_email,
                 "status": "shared",
-                "sent_at": localtime(share.created_at),                
-                "sort_time": share.created_at,  
+                "sent_at": localtime(share.created_at),
+                "sort_time": share.created_at,
                 "accessed": share.accessed,
-                "accessed_at":share.accessed_at or "N/A"
+                "accessed_at": share.accessed_at
             })
 
         # 🔹 Mails
@@ -1792,7 +1840,7 @@ class ReportService:
                 "sent_at": localtime(mail.sent_at),
                 "sort_time": mail.sent_at,
                 "accessed": share.accessed,
-                "accessed_at":share.accessed_at or "N/A"
+                "accessed_at": share.accessed_at
             })
 
         # Sort (latest first)

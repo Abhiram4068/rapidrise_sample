@@ -279,6 +279,7 @@ ALLOWED_CONTENT_TYPES = {
     "application/json",
     "application/xml",
     "text/xml",
+    "application/octet-stream"
 }
 
 MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024  # 100 MB per file
@@ -356,20 +357,26 @@ class ChunkUploadSerializer(serializers.Serializer):
         return file
 
     # ── cross-field validation ────────────────────────────────────────────────
-
     def validate(self, data):
-        # chunk_index < total_chunks sanity check
         if data["chunk_index"] >= data["total_chunks"]:
             raise serializers.ValidationError(
                 {"chunk_index": "chunk_index must be less than total_chunks."}
             )
 
-        # MIME cross-check on first chunk only (magic runs on chunk 0)
         if data["chunk_index"] == 0:
             detected = getattr(self, "_detected_mime", None)
             declared = data.get("content_type", "")
+
             if detected:
-                if declared in ("", "application/octet-stream"):
+                if detected == "application/octet-stream":
+                    # magic couldn't identify the real type (common for ZIP-based Office formats)
+                    # trust declared type if it's in the allow-list, else reject
+                    if declared and declared not in ALLOWED_CONTENT_TYPES:
+                        raise serializers.ValidationError(
+                            {"content_type": f"Declared content type '{declared}' is not allowed."}
+                        )
+                    data["content_type"] = declared or detected
+                elif declared in ("", "application/octet-stream"):
                     data["content_type"] = detected
                 elif detected != declared:
                     raise serializers.ValidationError(
@@ -990,8 +997,14 @@ class PublicFileSerializer(serializers.Serializer):
 
 class ReportQuerySerializer(serializers.Serializer):
     download = serializers.BooleanField(required=False, default=False)
-    timeline = serializers.ChoiceField(choices=['weekly', 'monthly'], required=False)
+    timeline = serializers.ChoiceField(choices=['monthly'], required=False)
     search = serializers.CharField(required=False, allow_blank=True, default='')
+    
+
+class ToggleMonthlyReportSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ['monthly_report_enabled']
 
 # serializers.py
 
