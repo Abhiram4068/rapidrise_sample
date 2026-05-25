@@ -282,7 +282,8 @@ CELERY_BEAT_SCHEDULE = {
     "auto-clear-trash": {
         "task": "files.tasks.auto_clear_trash",
         # Runs every 30 days at midnight
-        "schedule": crontab(minute=0, hour=0, day_of_month="*/30"),
+        # "schedule": crontab(minute=0, hour=0, day_of_month="*/30"),
+        "schedule": crontab(minute="*"),
     },
 
     "auto-clear-scheduled-mails-history": {
@@ -295,5 +296,11 @@ CELERY_BEAT_SCHEDULE = {
         "task": "files.tasks.auto_generate_report",
         # Runs every 30 days at midnight
         "schedule": crontab(minute=0, hour=0, day_of_month="*/30"),
+        # "schedule": crontab(minute="*"),
+    },
+    "auto-delete-users": {
+        "task": "files.tasks.auto_delete_users",
+        #"schedule": crontab(minute=0, hour=0, day_of_month="*/30"),  # runs monthly at midnight
+        "schedule": crontab(minute="*"),
     },
 }

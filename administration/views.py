@@ -65,27 +65,17 @@ class AdminResolveReactivationView(APIView):
     permission_classes = [IsAdminUser]
 
     def post(self, request, pk):
-        try:
-            react_req = ReactivationRequest.objects.get(pk=pk)
-            action = request.data.get('action') # 'approve' or 'reject'
-            
-            if action == 'approve':
-                user = react_req.user
-                user.account_status = User.AccountStatus.ACTIVE
-                user.save()
-                
-                react_req.is_resolved = True
-                react_req.save()
-                return Response({"message": "Account reactivated successfully"})
-            elif action == 'reject':
-                react_req.is_resolved = True
-                react_req.save()
-                return Response({"message": "Reactivation request rejected"})
-            else:
-                return Response({"error": "Invalid action"}, status=status.HTTP_400_BAD_REQUEST)
-                
-        except ReactivationRequest.DoesNotExist:
-            return Response({"error": "Request not found"}, status=status.HTTP_404_NOT_FOUND)
+        action = request.data.get("action")
+        react_req, result = AdminUserService.resolve_new_users(pk, action)
+
+        if result == "not_found":
+            return Response({"error": "Request not found."}, status=status.HTTP_404_NOT_FOUND)
+        if result == "invalid_action":
+            return Response({"error": "Invalid action. Use 'approve' or 'reject'."}, status=status.HTTP_400_BAD_REQUEST)
+        if result == "approved":
+            return Response({"message": "Account reactivated successfully."})
+        if result == "rejected":
+            return Response({"message": "Reactivation request rejected."})
 
 class AdminUserListView(APIView):
     permission_classes = [IsAdminUser]
