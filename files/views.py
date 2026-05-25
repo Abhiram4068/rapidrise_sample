@@ -377,6 +377,10 @@ class ChunkUploadView(APIView):
         description = request.data.get("description")
         if description is not None and description != "":
             payload["description"] = description
+        
+        team_id = request.data.get("team_id")
+        if team_id is not None and team_id != "":
+            payload["team_id"] = team_id
 
         serializer = ChunkUploadSerializer(data=payload)
         if not serializer.is_valid():
@@ -451,6 +455,7 @@ class ChunkUploadView(APIView):
                     content_type=data["content_type"],
                     description=data.get("description"),
                     action=data.get("action"),
+                    team_id=data.get("team_id")
                 )
                 progress["status"] = ChunkUploadSession.Status.COMPLETED
                 progress["progress_percent"] = 100
@@ -958,12 +963,20 @@ class FileShareCreateListUpdateView(APIView):
     permission_classes = [IsActiveAccount]
 
     def post(self, request, file_id):
-        serializer=FileShareCreateSerializer(data=request.data, context={'request': request}
-)
+        serializer = FileShareCreateSerializer(data=request.data, context={'request': request})
         if serializer.is_valid():
             try:
+                recipient_emails = set(serializer.validated_data['recipient_emails'])
+                team_id = serializer.validated_data.get('team_id')
+                
+                if team_id:
+                    team = TeamService.get_team_for_user(request.user, team_id)
+                    if team:
+                        member_emails = TeamMemberService.get_team_members(team).values_list('email', flat=True)
+                        recipient_emails.update(member_emails)
+
                 shares = []
-                for email in serializer.validated_data['recipient_emails']:
+                for email in recipient_emails:
                     share=FileShareService.create_share_token(file_id=file_id,
                                                               owner=request.user,
                                                               recipient_email=email,
@@ -1053,10 +1066,19 @@ class BulkFileShareView(APIView):
 
         try:
 
+            recipient_emails = set(serializer.validated_data['recipient_emails'])
+            team_id = serializer.validated_data.get('team_id')
+            
+            if team_id:
+                team = TeamService.get_team_for_user(request.user, team_id)
+                if team:
+                    member_emails = TeamMemberService.get_team_members(team).values_list('email', flat=True)
+                    recipient_emails.update(member_emails)
+
             bundle = FileShareService.create_bulk_share(
                 owner=request.user,
                 file_ids=serializer.validated_data['file_ids'],
-                recipient_emails=serializer.validated_data['recipient_emails'],
+                recipient_emails=list(recipient_emails),
                 expiration_datetime=serializer.validated_data['expiration_datetime'],
                 permission=serializer.validated_data['permission'],
                 title=serializer.validated_data.get('title', ''),
@@ -1125,8 +1147,17 @@ class FileShareScheduleCreateListView(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             try:
+                recipient_emails = set(serializer.validated_data['recipient_emails'])
+                team_id = serializer.validated_data.get('team_id')
+                
+                if team_id:
+                    team = TeamService.get_team_for_user(request.user, team_id)
+                    if team:
+                        member_emails = TeamMemberService.get_team_members(team).values_list('email', flat=True)
+                        recipient_emails.update(member_emails)
+
                 shares = []
-                for email in serializer.validated_data['recipient_emails']:
+                for email in recipient_emails:
                     share = FileShareService.create_share_token(
                         file_id=file_id,
                         owner=request.user,

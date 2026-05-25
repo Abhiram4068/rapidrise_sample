@@ -518,7 +518,7 @@ class FileService:
         return result["path"]
 
     @staticmethod
-    def complete_chunk_upload(user, upload_id, total_chunks, file_name, file_size, content_type, description=None, action=None):
+    def complete_chunk_upload(user, upload_id, total_chunks, file_name, file_size, content_type, description=None, action=None, team_id=None):
         """
         Assembles chunks and completes the upload.
         """
@@ -593,6 +593,7 @@ class FileService:
                     is_deleted=False
                 ).first()
 
+                final_file = None
                 if existing_file:
                     if not action:
                         if os.path.exists(final_full_path):
@@ -616,31 +617,46 @@ class FileService:
                         existing_file.file_size = file_obj.size
                         existing_file.content_type = file_obj.content_type
                         existing_file.save()
-                        
-                        return {
-                            "id": str(existing_file.id),
-                            "name": existing_file.original_name,
-                            "status": "success"
-                        }
-
-                    if action == "keep_both":
+                        final_file = existing_file
+                    
+                    elif action == "keep_both":
                         file_obj.name = FileService._rename_file(file_obj.name)
 
-                StorageService.claim(user.id, file_obj.size)
-                
-                new_file = File.objects.create(
-                    user=user,
-                    file=uploaded_path,
-                    original_name=file_obj.name,
-                    file_size=file_obj.size,
-                    content_type=file_obj.content_type,
-                    checksum=checksum,
-                    description=description
-                )
-                
+                if not final_file:
+                    StorageService.claim(user.id, file_obj.size)
+                    
+                    final_file = File.objects.create(
+                        user=user,
+                        file=uploaded_path,
+                        original_name=file_obj.name,
+                        file_size=file_obj.size,
+                        content_type=file_obj.content_type,
+                        checksum=checksum,
+                        description=description
+                    )
+
+                # Team Sharing Logic
+                if team_id:
+                    from .services import TeamService, TeamMemberService, FileShareService
+                    team = TeamService.get_team_for_user(user, team_id)
+                    if team:
+                        member_emails = TeamMemberService.get_team_members(team).values_list('email', flat=True)
+                        for email in member_emails:
+                            try:
+                                FileShareService.create_share_token(
+                                    file_id=final_file.id,
+                                    owner=user,
+                                    recipient_email=email,
+                                    expiration_datetime=24,  # Default 24 hours
+                                    title=f"Shared via Team: {team.name}",
+                                    message=f"A new file '{final_file.original_name}' has been uploaded to the team."
+                                )
+                            except Exception as e:
+                                logger.error(f"Failed to share file with team member {email}: {str(e)}")
+
                 return {
-                    "id": str(new_file.id),
-                    "name": new_file.original_name,
+                    "id": str(final_file.id),
+                    "name": final_file.original_name,
                     "status": "success"
                 }
 

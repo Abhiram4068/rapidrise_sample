@@ -309,6 +309,7 @@ class ChunkUploadSerializer(serializers.Serializer):
     file         = serializers.FileField()
     action       = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     description  = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    team_id      = serializers.UUIDField(required=False, allow_null=True)
 
     # ── per-field validators ──────────────────────────────────────────────────
 
@@ -585,6 +586,7 @@ class FileShareCreateSerializer(serializers.Serializer):
     title=serializers.CharField(max_length=500, required=False, allow_blank=True)
     message=serializers.CharField(max_length=500, required=False, allow_blank=True)
     schedule_at = serializers.DateTimeField(required=False)
+    team_id = serializers.UUIDField(required=False, allow_null=True)
     permission = serializers.ChoiceField(
         choices=['view_only', 'view_download', 'one_time_download', 'full_access'],
         default='view_only'
@@ -786,6 +788,11 @@ class BulkFileShareSerializer(serializers.Serializer):
 
     schedule_at = serializers.DateTimeField(
         required=False
+    )
+
+    team_id = serializers.UUIDField(
+        required=False,
+        allow_null=True
     )
 
     permission = serializers.ChoiceField(
