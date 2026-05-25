@@ -11,13 +11,13 @@ from rest_framework_simplejwt.exceptions import TokenError
 from django.http import FileResponse
 from django.core.exceptions import ValidationError, PermissionDenied
 from files.serializers import (
-    RegisterSerializer, LoginSerializer, UserProfileSerializer,ChangePasswordSerialzier, DeactivateAccountSerializer, ChunkUploadSerializer, ChunkUploadStatusQuerySerializer, ChunkUploadControlSerializer, FilesListSerializer, FileUpdateSerializer ,FileShareSerializer, FileShareCreateSerializer, PublicFileSerializer,CollectionSerializer, CollectionFileSerializer
-    ,ScheduledMailSerializer, FileShareListSerializer, ReportQuerySerializer, ToggleMonthlyReportSerializer, DesignationSerializer, ResetPasswordSerializer, ForgotPasswordSerializer, ReactivationRequestSerializer, DesignationChangeRequestListSerializer, DesignationChangeRequestCreateSerializer, DesignationChangeRequestAdminSerializer
-    )
+    RegisterSerializer, LoginSerializer, UserProfileSerializer, ChangePasswordSerialzier, DeactivateAccountSerializer, ChunkUploadSerializer, ChunkUploadStatusQuerySerializer, ChunkUploadControlSerializer, FilesListSerializer, FileUpdateSerializer, FileShareSerializer, FileShareCreateSerializer, PublicFileSerializer, CollectionSerializer, CollectionFileSerializer,
+    ScheduledMailSerializer, FileShareListSerializer, ReportQuerySerializer, ToggleMonthlyReportSerializer, DesignationSerializer, ResetPasswordSerializer, ForgotPasswordSerializer, ReactivationRequestSerializer, DesignationChangeRequestListSerializer, DesignationChangeRequestCreateSerializer, TeamSerializer, TeamMemberAddSerializer, TeamMemberSerializer
+)
 from files.models import ReactivationRequest, DesignationChangeRequest, ChunkUploadSession
 from files.services import (
-    create_user, authenticate_and_generate_token, AuthenticationError ,AuthService, UserProfileService, FileService, ChunkUploadService, FileShareService, ViewFileShareService, CollectionService, ReportService, AccountService, ThreadService, StageService, NodeService, DependencyService
-    )
+    create_user, authenticate_and_generate_token, AuthenticationError, AuthService, UserProfileService, FileService, ChunkUploadService, FileShareService, ViewFileShareService, CollectionService, ReportService, AccountService, ThreadService, StageService, NodeService, DependencyService, TeamService, TeamMemberService
+)
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.exceptions import NotFound, ValidationError as DRFValidationError
 from files.authentication import CookieJWTAuthentication
@@ -2059,3 +2059,123 @@ class NodeActivityView(APIView):
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
         activities = NodeActivity.objects.filter(node=node)
         return Response(NodeActivitySerializer(activities, many=True).data)
+
+
+
+class TeamListCreateView(APIView):
+    permission_classes = [IsActiveAccount]
+
+    def get(self, request):
+        search = request.query_params.get("search", "")
+        teams = TeamService.get_all(request.user, search)
+        return Response(TeamSerializer(teams, many=True).data)
+
+    def post(self, request):
+        try:
+            serializer = TeamSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            team = TeamService.create(request.user, serializer.validated_data["name"])
+            return Response(TeamSerializer(team).data, status=status.HTTP_201_CREATED)
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({"detail": "An unexpected error occurred."}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class TeamDetailView(APIView):
+    permission_classes = [IsActiveAccount]
+
+    def get_team(self, user, pk):
+        team = TeamService.get_by_id(user, pk)
+        if not team:
+            return None
+        return team
+
+    def get(self, request, pk):
+        try:
+            team = self.get_team(request.user, pk)
+            if not team:
+                return Response({"detail": "Team not found or you don't have access."}, status=status.HTTP_404_NOT_FOUND)
+            return Response(TeamSerializer(team).data)
+        except Exception as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    def patch(self, request, pk):
+        try:
+            team = self.get_team(request.user, pk)
+            if not team:
+                return Response({"detail": "Team not found or you don't have access."}, status=status.HTTP_404_NOT_FOUND)
+            serializer = TeamSerializer(team, data=request.data, partial=True)
+            serializer.is_valid(raise_exception=True)
+            updated = TeamService.update(team, serializer.validated_data["name"])
+            return Response(TeamSerializer(updated).data)
+        except Exception as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    def delete(self, request, pk):
+        try:
+            team = self.get_team(request.user, pk)
+            if not team:
+                return Response({"detail": "Team not found or you don't have access."}, status=status.HTTP_404_NOT_FOUND)
+            TeamService.delete(team)
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        except Exception as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+
+class TeamMemberListAddView(APIView):
+    permission_classes = [IsActiveAccount]
+
+    def get_team(self, user, pk):
+        return TeamService.get_by_id(user, pk)
+
+    def get(self, request, team_id):
+        try:
+            team = self.get_team(request.user, team_id)
+            if not team:
+                return Response({"detail": "Team not found or you don't have access."}, status=status.HTTP_404_NOT_FOUND)
+            members = TeamMemberService.get_members(team)
+            return Response(TeamMemberSerializer(members, many=True).data)
+        except Exception as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    def post(self, request, team_id):
+        try:
+            team = self.get_team(request.user, team_id)
+            if not team:
+                return Response({"detail": "Team not found or you don't have access."}, status=status.HTTP_404_NOT_FOUND)
+
+            serializer = TeamMemberAddSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+
+            member, result = TeamMemberService.add_member(team, serializer.validated_data["email"])
+
+            if result == "already_member":
+                return Response({"detail": "This email is already a member of this team."}, status=status.HTTP_400_BAD_REQUEST)
+
+            return Response(TeamMemberSerializer(member).data, status=status.HTTP_201_CREATED)
+        except Exception as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class TeamMemberRemoveView(APIView):
+    permission_classes = [IsActiveAccount]
+
+    def get_team(self, user, pk):
+        return TeamService.get_by_id(user, pk)
+
+    def delete(self, request, team_id, member_id):
+        try:
+            team = self.get_team(request.user, team_id)
+            if not team:
+                return Response({"detail": "Team not found or you don't have access."}, status=status.HTTP_404_NOT_FOUND)
+
+            result = TeamMemberService.remove_member(team, member_id)
+
+            if result == "not_member":
+                return Response({"detail": "Member not found in this team."}, status=status.HTTP_404_NOT_FOUND)
+
+            return Response({"detail": "Member removed successfully."}, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)

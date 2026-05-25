@@ -4,7 +4,7 @@ from files.views import (
     CollectionListCreateView, CollectionDetailView, CollectionFileView, FileStarredList, CollectionStarredList, RecentView, FileShareScheduleCreateListView, FileShareScheduleCalendarView, RevokeScheduledMailView, ReportDownloadView, ToggleMonthlyReportView,ArchiveDeleteFileView, StorageSummaryView, DashboardView, StorageManagementView, StoragePermanentDeleteView,
     DeactivateAccountView, ReactivationRequestView, BulkFileDeleteView, BulkFileArchiveView, BulkRestoreFileView, EmptyTrashView, BulkUnarchiveFileView,
     DesignationChangeRequestView,
-    BulkFileShareView
+    BulkFileShareView, TeamListCreateView, TeamDetailView, TeamMemberListAddView, TeamMemberRemoveView
     )
 from . import views
 """
@@ -114,5 +114,12 @@ urlpatterns=[
  
     # Activity feed
     path("nodes/<int:node_id>/activity/", views.NodeActivityView.as_view(), name="node-activity"),
+
+
+    # Teams
+    path("teams/", TeamListCreateView.as_view(), name="team-list-create"),
+    path("teams/<str:pk>/", TeamDetailView.as_view(), name="team-detail"),
+    path("teams/<str:team_id>/members/", TeamMemberListAddView.as_view(), name="team-member-list-add"),
+    path("teams/<str:team_id>/members/<str:member_id>/", TeamMemberRemoveView.as_view(), name="team-member-remove"),
 ]
 

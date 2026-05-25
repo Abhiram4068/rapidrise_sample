@@ -3,7 +3,7 @@ from django.contrib.auth import get_user_model
 from django.utils.text import slugify
 from .models import (
     User, File, FileShareLink, Collection, CollectionFile, ScheduledMail,
-    ReactivationRequest, DesignationChangeRequest, ChunkUploadSession,
+    ReactivationRequest, DesignationChangeRequest, ChunkUploadSession, Team, TeamMember
 )
 from django.db.models import F
 from django.db import transaction, IntegrityError
@@ -2634,3 +2634,60 @@ class DependencyService:
             event_type=NodeActivity.EventType.STATUS_CHANGED,
             message=f'Dependency from "{source_node.title}" removed. Marked as NEEDS_REVIEW.',
         )
+
+
+
+class TeamService:
+
+    @staticmethod
+    def get_all(user, search=""):
+        qs = Team.objects.filter(created_by=user)
+        if search:
+            qs = qs.filter(name__icontains=search)
+        return qs
+
+    @staticmethod
+    def create(user, name):
+        name = name.strip()
+        if Team.objects.filter(created_by=user, name__iexact=name).exists():
+            raise ValueError(f"A team with the name '{name}' already exists.")
+        return Team.objects.create(created_by=user, name=name)
+
+    @staticmethod
+    def get_by_id(user, pk):
+        return Team.objects.filter(pk=pk, created_by=user).first()
+
+    @staticmethod
+    def update(team, name):
+        name = name.strip()
+        if Team.objects.filter(created_by=team.created_by, name__iexact=name).exclude(pk=team.id).exists():
+            raise ValueError(f"A team with the name '{name}' already exists.")
+        team.name = name
+        team.save(update_fields=["name", "updated_at"])
+        return team
+
+    @staticmethod
+    def delete(team):
+        team.delete()
+
+
+class TeamMemberService:
+
+    @staticmethod
+    def get_members(team):
+        return TeamMember.objects.filter(team=team)
+
+    @staticmethod
+    def add_member(team, email):
+        if TeamMember.objects.filter(team=team, email=email).exists():
+            return None, "already_member"
+        member = TeamMember.objects.create(team=team, email=email)
+        return member, "success"
+
+    @staticmethod
+    def remove_member(team, member_id):
+        member = TeamMember.objects.filter(team=team, pk=member_id).first()
+        if not member:
+            return "not_member"
+        member.delete()
+        return "removed"

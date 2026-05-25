@@ -1,4 +1,4 @@
-from .models import User, File, FileShareLink, ShareBundle, Collection, CollectionFile, ScheduledMail, ReactivationRequest, DesignationChangeRequest
+from .models import User, File, FileShareLink, ShareBundle, Collection, CollectionFile, ScheduledMail, ReactivationRequest, DesignationChangeRequest, Team,TeamMember
 from rest_framework import serializers
 from django.contrib.auth.password_validation import validate_password
 from django.db import models
@@ -1237,3 +1237,34 @@ class GraphEdgeSerializer(serializers.ModelSerializer):
     class Meta:
         model = NodeDependency
         fields = ["id", "source_node", "target_node", "dependency_type"]
+
+class TeamSerializer(serializers.ModelSerializer):
+    member_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Team
+        fields = ["id", "name", "member_count", "created_at"]
+        read_only_fields = ["id", "member_count", "created_at"]
+
+    def get_member_count(self, obj):
+        return obj.member_count
+
+    def validate_name(self, value):
+        if not value.strip():
+            raise serializers.ValidationError("Team name cannot be blank.")
+        return value.strip()
+
+from django.contrib.auth import get_user_model
+class TeamMemberAddSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+    def validate_email(self, value):
+        return value.lower().strip()
+
+
+class TeamMemberSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = TeamMember
+        fields = ["id", "email", "joined_at"]
+        read_only_fields = fields

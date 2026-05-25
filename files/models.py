@@ -581,3 +581,45 @@ class ReactivationRequest(models.Model):
 
     def __str__(self):
         return f"Reactivation request for {self.user.email} at {self.created_at}"
+
+
+
+class Team(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=255)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="teams"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "teams"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return self.name
+
+    @property
+    def member_count(self):
+        return self.members.count()
+
+
+class TeamMember(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    team = models.ForeignKey(
+        Team,
+        on_delete=models.CASCADE,
+        related_name="members"
+    )
+    joined_at = models.DateTimeField(auto_now_add=True)
+    email = models.EmailField()
+    class Meta:
+        db_table = "team_members"
+        unique_together = ("team", "email")
+        ordering = ["joined_at"]
+
+    def __str__(self):
+        return f"{self.email} → {self.team.name}"
