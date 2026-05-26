@@ -871,6 +871,8 @@ class FileService:
         file_obj.is_deleted=True
         file_obj.deleted_at=timezone.now()
         file_obj.save(update_fields=['is_deleted', 'deleted_at'])
+        NodeFile.objects.filter(vault_file=file_obj).update(status=NodeFile.Status.TRASHED)
+
 
     @staticmethod
     def user_archive_file(user, file_id):
@@ -880,12 +882,15 @@ class FileService:
         file_obj.is_archive=True
         file_obj.archived_at=timezone.now()
         file_obj.save(update_fields=['is_archive', 'archived_at'])
+        NodeFile.objects.filter(vault_file=file_obj).update(status=NodeFile.Status.ARCHIVED)
 
     @staticmethod
     def bulk_delete_files(user, file_ids):
         if not file_ids or not isinstance(file_ids, list):
             raise ValueError("Provide a valid list of file_ids.")
+
         files = File.objects.filter(id__in=file_ids, user=user, is_deleted=False)
+        NodeFile.objects.filter(vault_file__in=files).update(status=NodeFile.Status.TRASHED)
         return files.update(is_deleted=True, deleted_at=timezone.now())
 
     @staticmethod
@@ -893,6 +898,7 @@ class FileService:
         if not file_ids or not isinstance(file_ids, list):
             raise ValueError("Provide a valid list of file_ids.")
         files = File.objects.filter(id__in=file_ids, user=user, is_deleted=False, is_archive=False)
+        NodeFile.objects.filter(vault_file__in=files).update(status=NodeFile.Status.ARCHIVED)
         return files.update(is_archive=True, archived_at=timezone.now())
 
     @staticmethod
@@ -903,6 +909,7 @@ class FileService:
         file_obj.is_archive=False
         file_obj.archived_at=None
         file_obj.save(update_fields=['is_archive', 'archived_at'])
+        NodeFile.objects.filter(vault_file=file_obj).update(status=NodeFile.Status.ACTIVE)
         
     @staticmethod
     def get_user_starred_files(user):
@@ -947,12 +954,25 @@ class FileService:
             File, user=user, id=file_id, is_deleted=True
         )
         return file_obj
+
+    @staticmethod
+    def permanent_delete_file(user, file_id):
+        file_obj=get_object_or_404(
+            File, user=user, id=file_id, is_deleted=True
+        )
+        if file_obj.file:
+            file_obj.file.delete(save=False)
+        file_obj.delete()
+        NodeFile.objects.filter(vault_file=file_obj).delete()
+        StorageService.release(user.id, file_obj.file_size)
+        return file_obj
     
     @staticmethod
     def user_restore_file(user, file_id):
         file_obj=File.objects.get(user= user, id=file_id)
         file_obj.is_deleted=False
         file_obj.save(update_fields=['is_deleted'])
+        NodeFile.objects.filter(vault_file=file_obj).update(status=NodeFile.Status.ACTIVE)
         return file_obj
 
     @staticmethod
@@ -960,6 +980,7 @@ class FileService:
         if not file_ids or not isinstance(file_ids, list):
             raise ValueError("Provide a valid list of file_ids.")
         files = File.objects.filter(id__in=file_ids, user=user, is_deleted=True)
+        NodeFile.objects.filter(vault_file__in=files).update(status=NodeFile.Status.ACTIVE)
         return files.update(is_deleted=False)
 
     @staticmethod
@@ -973,7 +994,7 @@ class FileService:
             for f in files:
                 if f.file:
                     f.file.delete(save=False)
-            
+            NodeFile.objects.filter(vault_file__in=files).delete()
             files.delete()
             StorageService.release(user.id, total_size)
             return count
@@ -984,6 +1005,7 @@ class FileService:
         if not file_ids or not isinstance(file_ids, list):
             raise ValueError("Provide a valid list of file_ids.")
         files = File.objects.filter(id__in=file_ids, user=user, is_archive=True)
+        NodeFile.objects.filter(vault_file__in=files).update(status=NodeFile.Status.ACTIVE)
         return files.update(is_archive=False, archived_at=None)
 
     @staticmethod
@@ -1001,35 +1023,23 @@ class FileService:
         return hasher.hexdigest()
 
     @staticmethod
-    def vault_upload(user, file) -> File:
+    def vault_upload(user, file, original_name=None) -> File:
         checksum = FileService._compute_checksum(file)
-        new_name=FileService._rename_file(file.name)
-        print(new_name)
-        existing = File.objects.filter(original_name=new_name,checksum=checksum, is_deleted=False).first()
-        file.seek(0)
         
-
-        # Detect real content type via magic (same as your chunk upload validation)
-        file_bytes = file.read()
+        # Detect real content type via magic
         file.seek(0)
-        detected_type = magic.from_buffer(file_bytes[:2048], mime=True)
+        file_bytes = file.read(2048)
+        file.seek(0)
+        detected_type = magic.from_buffer(file_bytes, mime=True)
 
-       
+        # Claim storage for the user
+        StorageService.claim(user.id, file.size)
 
-        if existing:
-            new_name = f"{uuid.uuid4().hex}_{file.name}"
-            # Same content already stored — point new record to a fresh copy
-            vault_file = File.objects.create(
+        # Create the vault file (main storage)
+        vault_file = File.objects.create(
             user=user,
-            original_name=new_name,
-            file_size=file.size,
-            content_type=detected_type,
-            checksum=checksum,
-        )
-        else:
-            vault_file = File.objects.create(
-            user=user,
-            original_name=file.name,
+            file=file,
+            original_name=original_name or file.name,
             file_size=file.size,
             content_type=detected_type,
             checksum=checksum,
@@ -1041,21 +1051,50 @@ class FileService:
  
     @staticmethod
     def upload(node: ProjectNode, user, file) -> NodeFile:
-        vault_file = FileService.vault_upload(user, file)
+        # Calculate checksum to check for existing file in main storage
+        checksum = FileService._compute_checksum(file)
+        existing_file = File.objects.filter(user=user, checksum=checksum, is_deleted=False).first()
+
+        # 1. Determine names
+        vault_filename = file.name
+        node_filename = file.name
+
+        if existing_file:
+            name, ext = os.path.splitext(file.name)
+            # Temporary name for vault creation to avoid confusion
+            # The actual renaming format filename_node_file-d (where -d is node/file details)
+            suffix = f"_node_{node.id}"
+            vault_filename = f"{name}{suffix}{ext}"
+            node_filename = vault_filename
+
+        # 2. Add to main storage (Vault) and claim storage
+        vault_file = FileService.vault_upload(user, file, original_name=vault_filename)
+
+        # 3. If it was a duplicate, we update the name to include file ID as well if needed
+        if existing_file:
+            name, ext = os.path.splitext(vault_filename)
+            final_name = f"{name}_{vault_file.id}{ext}"
+            vault_file.original_name = final_name
+            vault_file.save(update_fields=["original_name"])
+            node_filename = final_name
+
+        # 4. Add to node storage
         node_file = NodeFile.objects.create(
             node=node,
-            file=file,
-            original_name=file.name,
+            file=vault_file.file,
+            original_name=node_filename,
             uploaded_by=user,
+            vault_file=vault_file,
         )
+
         # Inline impact propagation (no Celery — synchronous for now)
         FileService._propagate_impact(node, user)
- 
+
         NodeActivity.objects.create(
             node=node,
             actor=user,
             event_type=NodeActivity.EventType.FILE_UPLOADED,
-            message=f'"{file.name}" uploaded to "{node.title}".',
+            message=f'"{node_filename}" uploaded to "{node.title}".',
         )
         return node_file
  
@@ -1109,8 +1148,18 @@ class FileService:
     def delete_file(node_file: NodeFile, user):
         name = node_file.original_name
         node = node_file.node
+        vault_file = node_file.vault_file
+        
+        # 1. Delete the main storage file if it exists
+        if vault_file:
+            StorageService.release(user.id, vault_file.file_size)
+            vault_file.file.delete(save=False)
+            vault_file.delete()
+
+        # 2. Delete the node file record and physical file
         node_file.file.delete(save=False)
         node_file.delete()
+        
         FileService._propagate_impact(node, user)
         NodeActivity.objects.create(
             node=node,

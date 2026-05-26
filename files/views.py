@@ -750,9 +750,7 @@ class ClearTrash(APIView):
     permission_classes=[IsAuthenticated]
     serializer_class=FilesListSerializer
     def delete(self, request, file_id): 
-        deleted_file=FileService.get_deleted_file_by_id(user=request.user, file_id=file_id)
-        StorageService.release(request.user.id, deleted_file.file_size)
-        deleted_file.delete()
+        FileService.permanent_delete_file(user=request.user, file_id=file_id)
         return Response(
             status=status.HTTP_204_NO_CONTENT
         )
@@ -2014,7 +2012,7 @@ class NodeFileListCreateView(APIView):
             node = ProjectNode.objects.get(pk=node_id, thread__created_by=request.user, is_deleted=False)
         except ProjectNode.DoesNotExist:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
-        files = NodeFile.objects.filter(node=node)
+        files = NodeFile.objects.filter(node=node, status=NodeFile.Status.ACTIVE)
         return Response(NodeFileSerializer(files, many=True, context={"request": request}).data)
 
     def post(self, request, node_id):
