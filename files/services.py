@@ -957,14 +957,23 @@ class FileService:
 
     @staticmethod
     def permanent_delete_file(user, file_id):
-        file_obj=get_object_or_404(
+        file_obj = get_object_or_404(
             File, user=user, id=file_id, is_deleted=True
         )
+        
+        # 1. Delete associated node file records first
+        NodeFile.objects.filter(vault_file=file_obj).delete()
+        
+        # 2. Release storage quota
+        StorageService.release(user.id, file_obj.file_size)
+        
+        # 3. Delete the physical file
         if file_obj.file:
             file_obj.file.delete(save=False)
+            
+        # 4. Delete the database record
         file_obj.delete()
-        NodeFile.objects.filter(vault_file=file_obj).delete()
-        StorageService.release(user.id, file_obj.file_size)
+        
         return file_obj
     
     @staticmethod
@@ -2136,14 +2145,10 @@ class DashboardClass:
         # Shared Contacts
         shared_contacts = FileShareLink.objects.filter(owner=user).values('recipient_email').distinct().count()
         
-        # Next Report In (using next scheduled mail)
-        next_schedule = ScheduledMail.objects.filter(
-            share__owner=user,
-            status=ScheduledMail.Status.PENDING,
-            scheduled_for__gt=now
-        ).order_by("scheduled_for").first()
-        
-        next_report_days = (next_schedule.scheduled_for - now).days if next_schedule else None
+        # Next Report In (Remaining days in current month)
+        import calendar
+        last_day = calendar.monthrange(now.year, now.month)[1]
+        next_report_days = max(0, last_day - now.day)
         
         # Monthly Reach (Growth in shares)
         last_month = now - timedelta(days=30)
@@ -2352,6 +2357,26 @@ class ThreadService:
         )
         stages = ProjectStage.objects.filter(thread_id=thread_id)
         return {"nodes": nodes, "edges": edges, "stages": stages}
+
+    @staticmethod
+    def delete_thread(user, thread_id):
+
+        thread = get_object_or_404(
+            ProjectThread,
+            id=thread_id,
+            created_by=user
+        )
+        
+        # Cleanly delete all nodes and their files (releasing storage)
+        nodes = ProjectNode.objects.filter(thread=thread)
+        for node in nodes:
+            node_files = NodeFile.objects.filter(node=node)
+            for node_file in node_files:
+                FileService.delete_file(node_file, user)
+            node.delete()
+
+        thread.delete()
+        return True
 
 
 class StageService:

@@ -370,8 +370,6 @@ class AdminDashboardService:
             last_login__lt=thirty_days_ago
         ).count()
 
-        # History pending approvals
-        pending_history_approvals = ProjectNode.objects.filter(status='NEEDS_REVIEW').count()
         
         return {
             "total_files": total_files,
@@ -380,8 +378,7 @@ class AdminDashboardService:
             "blocked_users": blocked_users,
             "idle_users": idle_users,
             "pending_deactivation_requests": pending_reactivation_requests,
-            "pending_registration_approvals": pending_registration_approvals,
-            "pending_history_approvals": pending_history_approvals,
+            "pending_registration_approvals": pending_registration_approvals
         }
 
 

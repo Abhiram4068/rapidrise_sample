@@ -1723,11 +1723,15 @@ class ThreadDetailView(APIView):
         return Response(serializer.data)
 
     def delete(self, request, pk):
-        thread = self._get_thread(pk, request.user)
-        if not thread:
-            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
-        thread.delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
+
+        ThreadService.delete_thread(
+            request.user,
+            pk
+        )
+
+        return Response(
+            status=status.HTTP_204_NO_CONTENT
+        )
 
 
 class ThreadGraphView(APIView):

@@ -1189,7 +1189,11 @@ class NodeFileUploadSerializer(serializers.Serializer):
     def validate_file(self, value):
         if not value.content_type:
             raise serializers.ValidationError("Content type is missing. Please upload a valid file.")
-        
+        if value.content_type not in ALLOWED_CONTENT_TYPES:
+            raise serializers.ValidationError(
+                f"Unsupported file type: {value.content_type}. "
+                "Please upload a valid document, image, archive, or text file."
+            )
         max_size_mb = 100
         if value.size > max_size_mb * 1024 * 1024:
             raise serializers.ValidationError(f"File size must not exceed {max_size_mb} MB.")
