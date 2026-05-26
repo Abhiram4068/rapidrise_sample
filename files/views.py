@@ -1379,7 +1379,7 @@ class CollectionListCreateView(APIView):
             )
         except ValidationError as e:
             logger.error(f"Validation error | user_id={request.user.id} | error={e}")
-            return Response({"detail": e.message}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": e.detail}, status=status.HTTP_400_BAD_REQUEST)
         return Response(
             CollectionSerializer(collection).data,
             status=status.HTTP_201_CREATED,
@@ -1408,14 +1408,14 @@ class CollectionDetailView(APIView):
                 validated_data=serializer.validated_data,
             )
         except ValidationError as e:
-            return Response({"detail": e.message}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": e.detail}, status=status.HTTP_400_BAD_REQUEST)
         return Response(CollectionSerializer(collection).data, status=status.HTTP_200_OK)
 
     def delete(self, request, collection_id):
         try:
             CollectionService.delete_collection(request.user, collection_id)
         except ValidationError as e:
-            return Response({"detail": e.message}, status=status.HTTP_404_NOT_FOUND)
+            return Response({"detail": e.detail}, status=status.HTTP_404_NOT_FOUND)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 

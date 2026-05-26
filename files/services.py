@@ -33,7 +33,7 @@ import threading
 import shutil
 import time
 import uuid
-from rest_framework.exceptions import ValidationError as DRFValidationError
+from rest_framework.exceptions import ValidationError as DRFValidationError, ValidationError
 from django.core.exceptions import ValidationError as DjangoValidationError
 from datetime import datetime
 from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
@@ -872,6 +872,7 @@ class FileService:
         file_obj.deleted_at=timezone.now()
         file_obj.save(update_fields=['is_deleted', 'deleted_at'])
         NodeFile.objects.filter(vault_file=file_obj).update(status=NodeFile.Status.TRASHED)
+        CollectionFile.objects.filter(file=file_obj).delete()
 
 
     @staticmethod
@@ -891,6 +892,7 @@ class FileService:
 
         files = File.objects.filter(id__in=file_ids, user=user, is_deleted=False)
         NodeFile.objects.filter(vault_file__in=files).update(status=NodeFile.Status.TRASHED)
+        CollectionFile.objects.filter(file__in=files).delete()
         return files.update(is_deleted=True, deleted_at=timezone.now())
 
     @staticmethod
@@ -1177,7 +1179,7 @@ class FileService:
             message=f'"{name}" deleted from "{node.title}".',
         )
         
-from django.db.models import Sum, Count
+from django.db.models import Sum, Count, Q
 from django.core.exceptions import PermissionDenied
 from .models import Collection, CollectionFile, File
 
@@ -1186,13 +1188,20 @@ class CollectionService:
 
     @staticmethod
     def get_user_collections(user):
-        """Return all collections for a user with file count and size annotated."""
         return (
-            Collection.objects.filter(user=user).order_by('-created_at')
+            Collection.objects.filter(user=user)
             .annotate(
-                total_files=Count("collection_files"),
-                total_size=Sum("collection_files__file__file_size"),
+                total_files=Count(
+                    "collection_files__file",
+                    filter=Q(collection_files__file__is_deleted=False),
+                    distinct=True
+                ),
+                total_size=Sum(
+                    "collection_files__file__file_size",
+                    filter=Q(collection_files__file__is_deleted=False)
+                ),
             )
+            .order_by("-created_at")
         )
 
     @staticmethod
@@ -1202,8 +1211,15 @@ class CollectionService:
             return (
                 Collection.objects.filter(user=user)
                 .annotate(
-                    total_files=Count("collection_files"),
-                    total_size=Sum("collection_files__file__file_size"),
+                    total_files=Count(
+                        "collection_files__file",
+                        filter=Q(collection_files__file__is_deleted=False),
+                        distinct=True
+                    ),
+                    total_size=Sum(
+                        "collection_files__file__file_size",
+                        filter=Q(collection_files__file__is_deleted=False)
+                    ),
                 )
                 .get(id=collection_id)
             )
@@ -1216,7 +1232,9 @@ class CollectionService:
         try:
             return Collection.objects.create(user=user, **validated_data)
         except IntegrityError:
-            raise DRFValidationError("You already have a collection with this name. Please choose a different name.")
+            raise ValidationError({
+                "name": ["You already have a collection with this name."]
+            })
 
     @staticmethod
     def update_collection(user, collection_id, validated_data):
@@ -1227,11 +1245,13 @@ class CollectionService:
             raise DRFValidationError("Collection not found.")
 
         for attr, value in validated_data.items():
-                setattr(collection, attr, value)
+            setattr(collection, attr, value)
         try:
             collection.save()
         except IntegrityError:
-            raise DRFValidationError("A collection with this name already exists.")
+            raise DRFValidationError({
+                "name": ["A collection with this name already exists."]
+            })
         return collection
 
 
