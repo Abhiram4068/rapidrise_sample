@@ -9,6 +9,7 @@ from django.db.models import F
 from django.db import transaction, IntegrityError
 from rest_framework_simplejwt.tokens import RefreshToken
 import hashlib
+from datetime import date
 from typing import List
 from django.http import FileResponse
 from django.shortcuts import get_object_or_404
@@ -226,12 +227,23 @@ class UserProfileService:
     @staticmethod
     def update_profile(user: User, data: dict) -> User:
         updatable_fields = ["first_name", "last_name", "date_of_birth"]
- 
+        if "date_of_birth" in data:
+            dob = data["date_of_birth"]
+            if isinstance(dob, str):
+                from datetime import datetime
+                dob = datetime.strptime(dob, "%Y-%m-%d").date()
+            today = date.today()
+            age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+            if age < 18:
+                raise ValidationError({"date_of_birth": "You must be at least 18 years old."})
+        fields_to_save = []
         for field in updatable_fields:
             if field in data:
                 setattr(user, field, data[field])
- 
-        user.save(update_fields=updatable_fields)
+                fields_to_save.append(field)
+
+        if fields_to_save:
+            user.save(update_fields=fields_to_save)
         return user
  
     # ── Designation Change Request ─────────────────────────────────────────
