@@ -36,14 +36,14 @@ ALLOWED_HOSTS = [
     ".onrender.com"
 ]
 CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5173",
+    "https://inv-rr-git-deploy-render-hosting-abhiram-s-projects4.vercel.app/",
 ]
 CORS_ALLOW_CREDENTIALS = True
 SESSION_COOKIE_SAMESITE = "Lax"   # or "None" if cross-site
-SESSION_COOKIE_SECURE = False     # True in production (HTTPS)
-CSRF_COOKIE_SECURE = False
+SESSION_COOKIE_SECURE = True     # True in production (HTTPS)
+CSRF_COOKIE_SECURE = True
 CSRF_TRUSTED_ORIGINS = [
-    "http://localhost:5173",
+    "https://inv-rr-git-deploy-render-hosting-abhiram-s-projects4.vercel.app/",
 ]
 
 
