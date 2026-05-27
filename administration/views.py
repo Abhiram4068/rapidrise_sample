@@ -7,15 +7,16 @@ from django.contrib.auth import get_user_model
 from files.models import File, ReactivationRequest
 from files.serializers import ReactivationRequestSerializer, UserProfileSerializer
 from django.db.models import Count, Sum
-from .serializers import AdminUserListSerializer, DesignationChangeRequestSerializer, DesignationSerializer
+from .serializers import AdminUserListSerializer, DesignationChangeRequestSerializer, DesignationSerializer, AdminLogSerializer
 from .services import AdminUserService, DesignationService
+from .models import AdminLog
 from rest_framework.pagination import PageNumberPagination
 from django.db import models
 from django.db.models import Q
 
 class StandardResultsPagination(PageNumberPagination):
     page_size = 12
-    page_size_query_param = 'page_size'   # allow ?page_size=24 override if needed
+    page_size_query_param = 'page_size' 
     max_page_size = 100
 
 User = get_user_model()
@@ -302,3 +303,26 @@ class AdminResolveDesignationChangeRequestView(APIView):
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class AdminLogListView(APIView):
+    permission_classes = [IsAdminUser]
+
+    def get(self, request):
+        queryset = AdminLog.objects.all().select_related(
+            'admin', 'target_user').order_by('-timestamp')
+
+        search = request.query_params.get('search', '').strip()
+        if search:
+            queryset = queryset.filter(
+                Q(target_user__email__icontains=search) |
+                Q(target_user__first_name__icontains=search) |
+                Q(target_user__last_name__icontains=search) |
+                Q(activity_type__icontains=search) |
+                Q(action_details__icontains=search)
+            )
+
+        paginator = StandardResultsPagination()
+        page = paginator.paginate_queryset(queryset, request)
+        serializer = AdminLogSerializer(page, many=True)
+        return paginator.get_paginated_response(serializer.data)

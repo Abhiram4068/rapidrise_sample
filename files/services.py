@@ -9,6 +9,7 @@ from django.db.models import F
 from django.db import transaction, IntegrityError
 from rest_framework_simplejwt.tokens import RefreshToken
 import hashlib
+from datetime import date
 from typing import List
 from django.http import FileResponse
 from django.shortcuts import get_object_or_404
@@ -33,7 +34,7 @@ import threading
 import shutil
 import time
 import uuid
-from rest_framework.exceptions import ValidationError as DRFValidationError
+from rest_framework.exceptions import ValidationError as DRFValidationError, ValidationError
 from django.core.exceptions import ValidationError as DjangoValidationError
 from datetime import datetime
 from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
@@ -47,7 +48,15 @@ def create_user(validated_data):
     try:
         with transaction.atomic():
             validated_data["account_status"] = User.AccountStatus.WAITING_FOR_APPROVAL
-            return User.objects.create_user(**validated_data)
+            user = User.objects.create_user(**validated_data)
+            from administration.services import AdminLogService
+            from administration.models import AdminLog
+            AdminLogService.log_activity(
+                activity_type=AdminLog.ActivityType.USER_REGISTERED,
+                target_user=user,
+                action_details=f"New user registration request from {user.email}."
+            )
+            return user
     except IntegrityError:
         raise ValueError("Unable to create user. Please try again")
     
@@ -204,6 +213,13 @@ class AccountService:
             user=user,
             reason=reason
         )
+        from administration.services import AdminLogService
+        from administration.models import AdminLog
+        AdminLogService.log_activity(
+            activity_type=AdminLog.ActivityType.REACTIVATION_REQUEST,
+            target_user=user,
+            action_details=f"Account reactivation request submitted by {user.email}."
+        )
         logger.info(f"Reactivation request submitted by user: {user.email}")
         return request
 
@@ -226,12 +242,23 @@ class UserProfileService:
     @staticmethod
     def update_profile(user: User, data: dict) -> User:
         updatable_fields = ["first_name", "last_name", "date_of_birth"]
- 
+        if "date_of_birth" in data:
+            dob = data["date_of_birth"]
+            if isinstance(dob, str):
+                from datetime import datetime
+                dob = datetime.strptime(dob, "%Y-%m-%d").date()
+            today = date.today()
+            age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+            if age < 18:
+                raise ValidationError({"date_of_birth": "You must be at least 18 years old."})
+        fields_to_save = []
         for field in updatable_fields:
             if field in data:
                 setattr(user, field, data[field])
- 
-        user.save(update_fields=updatable_fields)
+                fields_to_save.append(field)
+
+        if fields_to_save:
+            user.save(update_fields=fields_to_save)
         return user
  
     # ── Designation Change Request ─────────────────────────────────────────
@@ -269,12 +296,20 @@ class UserProfileService:
                 "Please wait for it to be resolved before submitting a new one."
             )
 
-        return DesignationChangeRequest.objects.create(
+        request = DesignationChangeRequest.objects.create(
             user=user,
             current_designation=user.designation,
             requested_designation=requested_designation,
             status=DesignationChangeRequest.StatusChoices.PENDING,
         )
+        from administration.services import AdminLogService
+        from administration.models import AdminLog
+        AdminLogService.log_activity(
+            activity_type=AdminLog.ActivityType.DESIGNATION_CHANGE_REQUEST,
+            target_user=user,
+            action_details=f"Designation change request from '{user.designation}' to '{requested_designation}' submitted by {user.email}."
+        )
+        return request
 
 class StorageService:
     """
@@ -871,6 +906,9 @@ class FileService:
         file_obj.is_deleted=True
         file_obj.deleted_at=timezone.now()
         file_obj.save(update_fields=['is_deleted', 'deleted_at'])
+        NodeFile.objects.filter(vault_file=file_obj).update(status=NodeFile.Status.TRASHED)
+        updated = CollectionFile.objects.filter(file=file_obj).update(status=CollectionFile.Status.TRASHED)
+
 
     @staticmethod
     def user_archive_file(user, file_id):
@@ -880,12 +918,17 @@ class FileService:
         file_obj.is_archive=True
         file_obj.archived_at=timezone.now()
         file_obj.save(update_fields=['is_archive', 'archived_at'])
+        NodeFile.objects.filter(vault_file=file_obj).update(status=NodeFile.Status.ARCHIVED)
+        CollectionFile.objects.filter(file=file_obj).update(status=CollectionFile.Status.ARCHIVED)
 
     @staticmethod
     def bulk_delete_files(user, file_ids):
         if not file_ids or not isinstance(file_ids, list):
             raise ValueError("Provide a valid list of file_ids.")
+
         files = File.objects.filter(id__in=file_ids, user=user, is_deleted=False)
+        NodeFile.objects.filter(vault_file__in=files).update(status=NodeFile.Status.TRASHED)
+        CollectionFile.objects.filter(file__in=files).update(status=CollectionFile.Status.TRASHED)
         return files.update(is_deleted=True, deleted_at=timezone.now())
 
     @staticmethod
@@ -893,6 +936,8 @@ class FileService:
         if not file_ids or not isinstance(file_ids, list):
             raise ValueError("Provide a valid list of file_ids.")
         files = File.objects.filter(id__in=file_ids, user=user, is_deleted=False, is_archive=False)
+        NodeFile.objects.filter(vault_file__in=files).update(status=NodeFile.Status.ARCHIVED)
+        CollectionFile.objects.filter(file__in=files).update(status=CollectionFile.Status.ARCHIVED)
         return files.update(is_archive=True, archived_at=timezone.now())
 
     @staticmethod
@@ -903,6 +948,8 @@ class FileService:
         file_obj.is_archive=False
         file_obj.archived_at=None
         file_obj.save(update_fields=['is_archive', 'archived_at'])
+        NodeFile.objects.filter(vault_file=file_obj).update(status=NodeFile.Status.ACTIVE)
+        CollectionFile.objects.filter(file=file_obj).update(status=CollectionFile.Status.ACTIVE)
         
     @staticmethod
     def get_user_starred_files(user):
@@ -934,6 +981,7 @@ class FileService:
         if not files.exists():
             raise ValueError("No matching archived files found.")
 
+        CollectionFile.objects.filter(file__in=files).update(status=CollectionFile.Status.TRASHED)
         return files.update(is_deleted=True, deleted_at=timezone.now())
 
     @staticmethod
@@ -947,12 +995,36 @@ class FileService:
             File, user=user, id=file_id, is_deleted=True
         )
         return file_obj
+
+    @staticmethod
+    def permanent_delete_file(user, file_id):
+        file_obj = get_object_or_404(
+            File, user=user, id=file_id, is_deleted=True
+        )
+        
+        # 1. Delete associated records first
+        NodeFile.objects.filter(vault_file=file_obj).delete()
+        CollectionFile.objects.filter(file=file_obj).delete()
+        
+        # 2. Release storage quota
+        StorageService.release(user.id, file_obj.file_size)
+        
+        # 3. Delete the physical file
+        if file_obj.file:
+            file_obj.file.delete(save=False)
+            
+        # 4. Delete the database record
+        file_obj.delete()
+        
+        return file_obj
     
     @staticmethod
     def user_restore_file(user, file_id):
         file_obj=File.objects.get(user= user, id=file_id)
         file_obj.is_deleted=False
         file_obj.save(update_fields=['is_deleted'])
+        NodeFile.objects.filter(vault_file=file_obj).update(status=NodeFile.Status.ACTIVE)
+        CollectionFile.objects.filter(file=file_obj).update(status=CollectionFile.Status.ACTIVE)
         return file_obj
 
     @staticmethod
@@ -960,6 +1032,8 @@ class FileService:
         if not file_ids or not isinstance(file_ids, list):
             raise ValueError("Provide a valid list of file_ids.")
         files = File.objects.filter(id__in=file_ids, user=user, is_deleted=True)
+        NodeFile.objects.filter(vault_file__in=files).update(status=NodeFile.Status.ACTIVE)
+        CollectionFile.objects.filter(file__in=files).update(status=CollectionFile.Status.ACTIVE)
         return files.update(is_deleted=False)
 
     @staticmethod
@@ -973,7 +1047,8 @@ class FileService:
             for f in files:
                 if f.file:
                     f.file.delete(save=False)
-            
+            NodeFile.objects.filter(vault_file__in=files).delete()
+            CollectionFile.objects.filter(file__in=files).delete()
             files.delete()
             StorageService.release(user.id, total_size)
             return count
@@ -984,6 +1059,8 @@ class FileService:
         if not file_ids or not isinstance(file_ids, list):
             raise ValueError("Provide a valid list of file_ids.")
         files = File.objects.filter(id__in=file_ids, user=user, is_archive=True)
+        NodeFile.objects.filter(vault_file__in=files).update(status=NodeFile.Status.ACTIVE)
+        CollectionFile.objects.filter(file__in=files).update(status=CollectionFile.Status.ACTIVE)
         return files.update(is_archive=False, archived_at=None)
 
     @staticmethod
@@ -1001,35 +1078,23 @@ class FileService:
         return hasher.hexdigest()
 
     @staticmethod
-    def vault_upload(user, file) -> File:
+    def vault_upload(user, file, original_name=None) -> File:
         checksum = FileService._compute_checksum(file)
-        new_name=FileService._rename_file(file.name)
-        print(new_name)
-        existing = File.objects.filter(original_name=new_name,checksum=checksum, is_deleted=False).first()
-        file.seek(0)
         
-
-        # Detect real content type via magic (same as your chunk upload validation)
-        file_bytes = file.read()
+        # Detect real content type via magic
         file.seek(0)
-        detected_type = magic.from_buffer(file_bytes[:2048], mime=True)
+        file_bytes = file.read(2048)
+        file.seek(0)
+        detected_type = magic.from_buffer(file_bytes, mime=True)
 
-       
+        # Claim storage for the user
+        StorageService.claim(user.id, file.size)
 
-        if existing:
-            new_name = f"{uuid.uuid4().hex}_{file.name}"
-            # Same content already stored — point new record to a fresh copy
-            vault_file = File.objects.create(
+        # Create the vault file (main storage)
+        vault_file = File.objects.create(
             user=user,
-            original_name=new_name,
-            file_size=file.size,
-            content_type=detected_type,
-            checksum=checksum,
-        )
-        else:
-            vault_file = File.objects.create(
-            user=user,
-            original_name=file.name,
+            file=file,
+            original_name=original_name or file.name,
             file_size=file.size,
             content_type=detected_type,
             checksum=checksum,
@@ -1041,21 +1106,50 @@ class FileService:
  
     @staticmethod
     def upload(node: ProjectNode, user, file) -> NodeFile:
-        vault_file = FileService.vault_upload(user, file)
+        # Calculate checksum to check for existing file in main storage
+        checksum = FileService._compute_checksum(file)
+        existing_file = File.objects.filter(user=user, checksum=checksum, is_deleted=False).first()
+
+        # 1. Determine names
+        vault_filename = file.name
+        node_filename = file.name
+
+        if existing_file:
+            name, ext = os.path.splitext(file.name)
+            # Temporary name for vault creation to avoid confusion
+            # The actual renaming format filename_node_file-d (where -d is node/file details)
+            suffix = f"_node_{node.id}"
+            vault_filename = f"{name}{suffix}{ext}"
+            node_filename = vault_filename
+
+        # 2. Add to main storage (Vault) and claim storage
+        vault_file = FileService.vault_upload(user, file, original_name=vault_filename)
+
+        # 3. If it was a duplicate, we update the name to include file ID as well if needed
+        if existing_file:
+            name, ext = os.path.splitext(vault_filename)
+            final_name = f"{name}_{vault_file.id}{ext}"
+            vault_file.original_name = final_name
+            vault_file.save(update_fields=["original_name"])
+            node_filename = final_name
+
+        # 4. Add to node storage
         node_file = NodeFile.objects.create(
             node=node,
-            file=file,
-            original_name=file.name,
+            file=vault_file.file,
+            original_name=node_filename,
             uploaded_by=user,
+            vault_file=vault_file,
         )
+
         # Inline impact propagation (no Celery — synchronous for now)
         FileService._propagate_impact(node, user)
- 
+
         NodeActivity.objects.create(
             node=node,
             actor=user,
             event_type=NodeActivity.EventType.FILE_UPLOADED,
-            message=f'"{file.name}" uploaded to "{node.title}".',
+            message=f'"{node_filename}" uploaded to "{node.title}".',
         )
         return node_file
  
@@ -1109,8 +1203,18 @@ class FileService:
     def delete_file(node_file: NodeFile, user):
         name = node_file.original_name
         node = node_file.node
+        vault_file = node_file.vault_file
+        
+        # 1. Delete the main storage file if it exists
+        if vault_file:
+            StorageService.release(user.id, vault_file.file_size)
+            vault_file.file.delete(save=False)
+            vault_file.delete()
+
+        # 2. Delete the node file record and physical file
         node_file.file.delete(save=False)
         node_file.delete()
+        
         FileService._propagate_impact(node, user)
         NodeActivity.objects.create(
             node=node,
@@ -1119,22 +1223,36 @@ class FileService:
             message=f'"{name}" deleted from "{node.title}".',
         )
         
-from django.db.models import Sum, Count
+from django.db.models import Sum, Count, Q
 from django.core.exceptions import PermissionDenied
 from .models import Collection, CollectionFile, File
 
 
 class CollectionService:
-
     @staticmethod
     def get_user_collections(user):
-        """Return all collections for a user with file count and size annotated."""
         return (
-            Collection.objects.filter(user=user).order_by('-created_at')
+            Collection.objects.filter(user=user)
             .annotate(
-                total_files=Count("collection_files"),
-                total_size=Sum("collection_files__file__file_size"),
+                total_files=Count(
+                    "collection_files__file__id",
+                    filter=Q(
+                        collection_files__status=CollectionFile.Status.ACTIVE,
+                        collection_files__file__is_deleted=False,
+                        collection_files__file__is_archive=False
+                    ),
+                    distinct=True
+                ),
+                total_size=Sum(
+                    "collection_files__file__file_size",
+                    filter=Q(
+                        collection_files__status=CollectionFile.Status.ACTIVE,
+                        collection_files__file__is_deleted=False,
+                        collection_files__file__is_archive=False
+                    )
+                ),
             )
+            .order_by("-created_at")
         )
 
     @staticmethod
@@ -1144,8 +1262,23 @@ class CollectionService:
             return (
                 Collection.objects.filter(user=user)
                 .annotate(
-                    total_files=Count("collection_files"),
-                    total_size=Sum("collection_files__file__file_size"),
+                    total_files=Count(
+                        "collection_files__file",
+                        filter=Q(
+                            collection_files__status=CollectionFile.Status.ACTIVE,
+                            collection_files__file__is_deleted=False,
+                            collection_files__file__is_archive=False
+                        ),
+                        distinct=True
+                    ),
+                    total_size=Sum(
+                        "collection_files__file__file_size",
+                        filter=Q(
+                            collection_files__status=CollectionFile.Status.ACTIVE,
+                            collection_files__file__is_deleted=False,
+                            collection_files__file__is_archive=False
+                        )
+                    ),
                 )
                 .get(id=collection_id)
             )
@@ -1158,7 +1291,9 @@ class CollectionService:
         try:
             return Collection.objects.create(user=user, **validated_data)
         except IntegrityError:
-            raise DRFValidationError("You already have a collection with this name. Please choose a different name.")
+            raise ValidationError({
+                "name": ["You already have a collection with this name."]
+            })
 
     @staticmethod
     def update_collection(user, collection_id, validated_data):
@@ -1169,11 +1304,13 @@ class CollectionService:
             raise DRFValidationError("Collection not found.")
 
         for attr, value in validated_data.items():
-                setattr(collection, attr, value)
+            setattr(collection, attr, value)
         try:
             collection.save()
         except IntegrityError:
-            raise DRFValidationError("A collection with this name already exists.")
+            raise DRFValidationError({
+                "name": ["A collection with this name already exists."]
+            })
         return collection
 
 
@@ -1493,7 +1630,7 @@ class FileShareService:
         ---
         If you did not expect this file, please ignore this email.
                 """
-        print(share_url)
+      
         try:
             send_mail(
                 subject=email_subject,
@@ -2087,14 +2224,10 @@ class DashboardClass:
         # Shared Contacts
         shared_contacts = FileShareLink.objects.filter(owner=user).values('recipient_email').distinct().count()
         
-        # Next Report In (using next scheduled mail)
-        next_schedule = ScheduledMail.objects.filter(
-            share__owner=user,
-            status=ScheduledMail.Status.PENDING,
-            scheduled_for__gt=now
-        ).order_by("scheduled_for").first()
-        
-        next_report_days = (next_schedule.scheduled_for - now).days if next_schedule else None
+        # Next Report In (Remaining days in current month)
+        import calendar
+        last_day = calendar.monthrange(now.year, now.month)[1]
+        next_report_days = max(0, last_day - now.day)
         
         # Monthly Reach (Growth in shares)
         last_month = now - timedelta(days=30)
@@ -2303,6 +2436,26 @@ class ThreadService:
         )
         stages = ProjectStage.objects.filter(thread_id=thread_id)
         return {"nodes": nodes, "edges": edges, "stages": stages}
+
+    @staticmethod
+    def delete_thread(user, thread_id):
+
+        thread = get_object_or_404(
+            ProjectThread,
+            id=thread_id,
+            created_by=user
+        )
+        
+        # Cleanly delete all nodes and their files (releasing storage)
+        nodes = ProjectNode.objects.filter(thread=thread)
+        for node in nodes:
+            node_files = NodeFile.objects.filter(node=node)
+            for node_file in node_files:
+                FileService.delete_file(node_file, user)
+            node.delete()
+
+        thread.delete()
+        return True
 
 
 class StageService:

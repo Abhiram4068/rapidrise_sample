@@ -3,7 +3,7 @@ from rest_framework.exceptions import NotFound
 from django.contrib.auth import get_user_model
 from django.core.mail import send_mail
 from django.conf import settings
-from .models import Designation
+from .models import Designation, AdminLog
 from files.models import ReactivationRequest
 from django.shortcuts import get_object_or_404
 import logging
@@ -37,6 +37,11 @@ class AdminUserService:
             user = User.objects.get(pk=pk)
             user.account_status = User.AccountStatus.ACTIVE
             user.save()
+            AdminLogService.log_activity(
+                activity_type=AdminLog.ActivityType.USER_UNBLOCKED,
+                target_user=user,
+                action_details=f"User {user.email} has been unblocked by administrator."
+            )
             def send_email():
                 try:
                     send_mail(
@@ -80,6 +85,11 @@ class AdminUserService:
             user = User.objects.get(pk=pk, account_status__in=allowed_statuses)
             user.account_status = User.AccountStatus.BLOCKED
             user.save()
+            AdminLogService.log_activity(
+                activity_type=AdminLog.ActivityType.USER_BLOCKED,
+                target_user=user,
+                action_details=f"User {user.email} has been blocked by administrator."
+            )
             def send_email():
                 try:
                     send_mail(
@@ -133,6 +143,11 @@ class AdminUserService:
             else:
                 raise ValueError("Invalid action. Must be 'accept' or 'reject'.")
             user.save()
+            AdminLogService.log_activity(
+                activity_type=AdminLog.ActivityType.NEW_USER_RESOLVED,
+                target_user=user,
+                action_details=f"Registration request for {user.email} was {action}ed."
+            )
             return user
         except User.DoesNotExist:
             raise NotFound("Pending user request not found.")
@@ -153,6 +168,11 @@ class AdminUserService:
             user.account_status = User.AccountStatus.DELETED
             user.deleted_at=timezone.now()
             user.save()
+            AdminLogService.log_activity(
+                activity_type=AdminLog.ActivityType.USER_DELETED,
+                target_user=user,
+                action_details=f"User {user.email} has been temporarily deleted by administrator."
+            )
             def send_email():
                 try:
                     send_mail(
@@ -183,6 +203,11 @@ class AdminUserService:
             user.account_status = User.AccountStatus.ACTIVE
             user.deleted_at = None
             user.save()
+            AdminLogService.log_activity(
+                activity_type=AdminLog.ActivityType.USER_RESTORED,
+                target_user=user,
+                action_details=f"User {user.email} has been restored by administrator."
+            )
             def send_email():
                 try:
                     send_mail(
@@ -231,6 +256,12 @@ class AdminUserService:
                 request.resolved_by = admin_user
                 request.resolved_at = timezone.now()
                 request.save(update_fields=["status", "resolved_by", "resolved_at"])
+                AdminLogService.log_activity(
+                    admin=admin_user,
+                    activity_type=AdminLog.ActivityType.DESIGNATION_CHANGE_RESOLVED,
+                    target_user=request.user,
+                    action_details=f"Designation change request for {user.email} to '{request.requested_designation}' was {action}ed."
+                )
 
                 def send_approval_email():
                     try:
@@ -370,8 +401,6 @@ class AdminDashboardService:
             last_login__lt=thirty_days_ago
         ).count()
 
-        # History pending approvals
-        pending_history_approvals = ProjectNode.objects.filter(status='NEEDS_REVIEW').count()
         
         return {
             "total_files": total_files,
@@ -380,8 +409,7 @@ class AdminDashboardService:
             "blocked_users": blocked_users,
             "idle_users": idle_users,
             "pending_deactivation_requests": pending_reactivation_requests,
-            "pending_registration_approvals": pending_registration_approvals,
-            "pending_history_approvals": pending_history_approvals,
+            "pending_registration_approvals": pending_registration_approvals
         }
 
 
@@ -403,3 +431,17 @@ class DesignationService:
         name = designation.name
         designation.delete()
         return {"message": f"Designation '{name}' has been removed successfully."}
+
+class AdminLogService:
+    @staticmethod
+    def log_activity(activity_type, admin=None, target_user=None, action_details=""):
+        return AdminLog.objects.create(
+            admin=admin,
+            target_user=target_user,
+            activity_type=activity_type,
+            action_details=action_details
+        )
+
+    @staticmethod
+    def get_all_logs():
+        return AdminLog.objects.all().select_related('admin', 'target_user')

@@ -750,9 +750,7 @@ class ClearTrash(APIView):
     permission_classes=[IsAuthenticated]
     serializer_class=FilesListSerializer
     def delete(self, request, file_id): 
-        deleted_file=FileService.get_deleted_file_by_id(user=request.user, file_id=file_id)
-        StorageService.release(request.user.id, deleted_file.file_size)
-        deleted_file.delete()
+        FileService.permanent_delete_file(user=request.user, file_id=file_id)
         return Response(
             status=status.HTTP_204_NO_CONTENT
         )
@@ -1381,7 +1379,7 @@ class CollectionListCreateView(APIView):
             )
         except ValidationError as e:
             logger.error(f"Validation error | user_id={request.user.id} | error={e}")
-            return Response({"detail": e.message}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": e.detail}, status=status.HTTP_400_BAD_REQUEST)
         return Response(
             CollectionSerializer(collection).data,
             status=status.HTTP_201_CREATED,
@@ -1410,14 +1408,14 @@ class CollectionDetailView(APIView):
                 validated_data=serializer.validated_data,
             )
         except ValidationError as e:
-            return Response({"detail": e.message}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": e.detail}, status=status.HTTP_400_BAD_REQUEST)
         return Response(CollectionSerializer(collection).data, status=status.HTTP_200_OK)
 
     def delete(self, request, collection_id):
         try:
             CollectionService.delete_collection(request.user, collection_id)
         except ValidationError as e:
-            return Response({"detail": e.message}, status=status.HTTP_404_NOT_FOUND)
+            return Response({"detail": e.detail}, status=status.HTTP_404_NOT_FOUND)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -1725,11 +1723,15 @@ class ThreadDetailView(APIView):
         return Response(serializer.data)
 
     def delete(self, request, pk):
-        thread = self._get_thread(pk, request.user)
-        if not thread:
-            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
-        thread.delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
+
+        ThreadService.delete_thread(
+            request.user,
+            pk
+        )
+
+        return Response(
+            status=status.HTTP_204_NO_CONTENT
+        )
 
 
 class ThreadGraphView(APIView):
@@ -2014,7 +2016,7 @@ class NodeFileListCreateView(APIView):
             node = ProjectNode.objects.get(pk=node_id, thread__created_by=request.user, is_deleted=False)
         except ProjectNode.DoesNotExist:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
-        files = NodeFile.objects.filter(node=node)
+        files = NodeFile.objects.filter(node=node, status=NodeFile.Status.ACTIVE)
         return Response(NodeFileSerializer(files, many=True, context={"request": request}).data)
 
     def post(self, request, node_id):

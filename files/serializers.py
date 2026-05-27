@@ -539,10 +539,10 @@ class CollectionSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "created_at", "updated_at"]
 
     def get_total_files(self, obj):
-        return obj.get_total_files()
+        return getattr(obj, 'total_files', 0) or 0
 
     def get_total_size(self, obj):
-        return obj.get_total_size()
+        return getattr(obj, 'total_size', 0) or 0
 
 
 class CollectionFileSerializer(serializers.ModelSerializer):
@@ -1064,7 +1064,7 @@ class ThreadSerializer(serializers.ModelSerializer):
         return obj.nodes.filter(is_deleted=False).count()
     def get_file_count(self, obj):
         from files.models import NodeFile
-        return NodeFile.objects.filter(node__thread=obj).count()
+        return NodeFile.objects.filter(node__thread=obj, status=NodeFile.Status.ACTIVE).count()
 
 
 class ThreadCreateSerializer(serializers.ModelSerializer):
@@ -1187,6 +1187,13 @@ class NodeFileUploadSerializer(serializers.Serializer):
     file = serializers.FileField()
 
     def validate_file(self, value):
+        if not value.content_type:
+            raise serializers.ValidationError("Content type is missing. Please upload a valid file.")
+        if value.content_type not in ALLOWED_CONTENT_TYPES:
+            raise serializers.ValidationError(
+                f"Unsupported file type: {value.content_type}. "
+                "Please upload a valid document, image, archive, or text file."
+            )
         max_size_mb = 100
         if value.size > max_size_mb * 1024 * 1024:
             raise serializers.ValidationError(f"File size must not exceed {max_size_mb} MB.")
@@ -1229,7 +1236,7 @@ class GraphNodeSerializer(serializers.ModelSerializer):
         return NodeService.is_root_node(obj)
 
     def get_file_count(self, obj):
-        return obj.files.count()
+        return NodeFile.objects.filter(node=obj, status=NodeFile.Status.ACTIVE).count()
 
 
 class GraphEdgeSerializer(serializers.ModelSerializer):
