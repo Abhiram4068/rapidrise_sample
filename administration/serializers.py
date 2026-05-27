@@ -23,7 +23,7 @@ class AdminUserListSerializer(serializers.ModelSerializer):
         return obj.designation.name if obj.designation_id else ""
 
 
-from .models import Designation
+from .models import Designation, AdminLog
 
 
 class DesignationSerializer(serializers.ModelSerializer):
@@ -62,5 +62,17 @@ class DesignationChangeRequestSerializer(serializers.ModelSerializer):
 
     def get_user_full_name(self, obj):
         return f"{obj.user.first_name} {obj.user.last_name}".strip()
+
+class AdminLogSerializer(serializers.ModelSerializer):
+    admin_email = serializers.EmailField(source='admin.email', read_only=True)
+    target_user_email = serializers.EmailField(source='target_user.email', read_only=True)
+    activity_type_display = serializers.CharField(source='get_activity_type_display', read_only=True)
+
+    class Meta:
+        model = AdminLog
+        fields = [
+            'id', 'admin', 'admin_email', 'target_user', 'target_user_email',
+            'activity_type', 'activity_type_display', 'action_details', 'timestamp'
+        ]
 
 

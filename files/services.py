@@ -48,7 +48,15 @@ def create_user(validated_data):
     try:
         with transaction.atomic():
             validated_data["account_status"] = User.AccountStatus.WAITING_FOR_APPROVAL
-            return User.objects.create_user(**validated_data)
+            user = User.objects.create_user(**validated_data)
+            from administration.services import AdminLogService
+            from administration.models import AdminLog
+            AdminLogService.log_activity(
+                activity_type=AdminLog.ActivityType.USER_REGISTERED,
+                target_user=user,
+                action_details=f"New user registration request from {user.email}."
+            )
+            return user
     except IntegrityError:
         raise ValueError("Unable to create user. Please try again")
     
@@ -205,6 +213,13 @@ class AccountService:
             user=user,
             reason=reason
         )
+        from administration.services import AdminLogService
+        from administration.models import AdminLog
+        AdminLogService.log_activity(
+            activity_type=AdminLog.ActivityType.REACTIVATION_REQUEST,
+            target_user=user,
+            action_details=f"Account reactivation request submitted by {user.email}."
+        )
         logger.info(f"Reactivation request submitted by user: {user.email}")
         return request
 
@@ -281,12 +296,20 @@ class UserProfileService:
                 "Please wait for it to be resolved before submitting a new one."
             )
 
-        return DesignationChangeRequest.objects.create(
+        request = DesignationChangeRequest.objects.create(
             user=user,
             current_designation=user.designation,
             requested_designation=requested_designation,
             status=DesignationChangeRequest.StatusChoices.PENDING,
         )
+        from administration.services import AdminLogService
+        from administration.models import AdminLog
+        AdminLogService.log_activity(
+            activity_type=AdminLog.ActivityType.DESIGNATION_CHANGE_REQUEST,
+            target_user=user,
+            action_details=f"Designation change request from '{user.designation}' to '{requested_designation}' submitted by {user.email}."
+        )
+        return request
 
 class StorageService:
     """

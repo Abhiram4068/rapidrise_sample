@@ -1,7 +1,8 @@
 from django.urls import path
 from .views import (AdminDashboardStatsView, AdminReactivationRequestListView, AdminResolveReactivationView, AdminUserListView, AdminUserDetailsView, AdminBlockUserView,
 AdminViewNewUserRequests, AdminResolveNewUserRequest, AdminBlockedUserListView, AdminUnblockUserView, AdminDeletedUserListView, AdminDeleteUserView, AdminRestoreUserView,
-AdminDesignationChangeRequestListView, AdminResolveDesignationChangeRequestView, AdminDesignationListCreateDeleteView, AdminDesignationDestroyView)
+AdminDesignationChangeRequestListView, AdminResolveDesignationChangeRequestView, AdminDesignationListCreateDeleteView, AdminDesignationDestroyView,
+AdminLogListView)
 
 urlpatterns = [
     path('stats/', AdminDashboardStatsView.as_view(), name='admin-stats'),
@@ -21,4 +22,5 @@ urlpatterns = [
     path('designations/<str:pk>/', AdminDesignationDestroyView.as_view(), name='admin-designation-destroy'),
     path('designation-requests/', AdminDesignationChangeRequestListView.as_view(), name='admin-designation-requests'),
     path('designation-requests/<int:pk>/resolve/', AdminResolveDesignationChangeRequestView.as_view(), name='admin-resolve-designation-request'),
+    path('activity-logs/', AdminLogListView.as_view(), name='admin-activity-logs'),
 ]
