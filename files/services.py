@@ -872,7 +872,8 @@ class FileService:
         file_obj.deleted_at=timezone.now()
         file_obj.save(update_fields=['is_deleted', 'deleted_at'])
         NodeFile.objects.filter(vault_file=file_obj).update(status=NodeFile.Status.TRASHED)
-        CollectionFile.objects.filter(file=file_obj).delete()
+        updated = CollectionFile.objects.filter(file=file_obj).update(status=CollectionFile.Status.TRASHED)
+        print("CollectionFiles updated:", updated)
 
 
     @staticmethod
@@ -884,6 +885,7 @@ class FileService:
         file_obj.archived_at=timezone.now()
         file_obj.save(update_fields=['is_archive', 'archived_at'])
         NodeFile.objects.filter(vault_file=file_obj).update(status=NodeFile.Status.ARCHIVED)
+        CollectionFile.objects.filter(file=file_obj).update(status=CollectionFile.Status.ARCHIVED)
 
     @staticmethod
     def bulk_delete_files(user, file_ids):
@@ -892,7 +894,7 @@ class FileService:
 
         files = File.objects.filter(id__in=file_ids, user=user, is_deleted=False)
         NodeFile.objects.filter(vault_file__in=files).update(status=NodeFile.Status.TRASHED)
-        CollectionFile.objects.filter(file__in=files).delete()
+        CollectionFile.objects.filter(file__in=files).update(status=CollectionFile.Status.TRASHED)
         return files.update(is_deleted=True, deleted_at=timezone.now())
 
     @staticmethod
@@ -901,6 +903,7 @@ class FileService:
             raise ValueError("Provide a valid list of file_ids.")
         files = File.objects.filter(id__in=file_ids, user=user, is_deleted=False, is_archive=False)
         NodeFile.objects.filter(vault_file__in=files).update(status=NodeFile.Status.ARCHIVED)
+        CollectionFile.objects.filter(file__in=files).update(status=CollectionFile.Status.ARCHIVED)
         return files.update(is_archive=True, archived_at=timezone.now())
 
     @staticmethod
@@ -912,6 +915,7 @@ class FileService:
         file_obj.archived_at=None
         file_obj.save(update_fields=['is_archive', 'archived_at'])
         NodeFile.objects.filter(vault_file=file_obj).update(status=NodeFile.Status.ACTIVE)
+        CollectionFile.objects.filter(file=file_obj).update(status=CollectionFile.Status.ACTIVE)
         
     @staticmethod
     def get_user_starred_files(user):
@@ -943,6 +947,7 @@ class FileService:
         if not files.exists():
             raise ValueError("No matching archived files found.")
 
+        CollectionFile.objects.filter(file__in=files).update(status=CollectionFile.Status.TRASHED)
         return files.update(is_deleted=True, deleted_at=timezone.now())
 
     @staticmethod
@@ -963,8 +968,9 @@ class FileService:
             File, user=user, id=file_id, is_deleted=True
         )
         
-        # 1. Delete associated node file records first
+        # 1. Delete associated records first
         NodeFile.objects.filter(vault_file=file_obj).delete()
+        CollectionFile.objects.filter(file=file_obj).delete()
         
         # 2. Release storage quota
         StorageService.release(user.id, file_obj.file_size)
@@ -984,6 +990,7 @@ class FileService:
         file_obj.is_deleted=False
         file_obj.save(update_fields=['is_deleted'])
         NodeFile.objects.filter(vault_file=file_obj).update(status=NodeFile.Status.ACTIVE)
+        CollectionFile.objects.filter(file=file_obj).update(status=CollectionFile.Status.ACTIVE)
         return file_obj
 
     @staticmethod
@@ -992,6 +999,7 @@ class FileService:
             raise ValueError("Provide a valid list of file_ids.")
         files = File.objects.filter(id__in=file_ids, user=user, is_deleted=True)
         NodeFile.objects.filter(vault_file__in=files).update(status=NodeFile.Status.ACTIVE)
+        CollectionFile.objects.filter(file__in=files).update(status=CollectionFile.Status.ACTIVE)
         return files.update(is_deleted=False)
 
     @staticmethod
@@ -1006,6 +1014,7 @@ class FileService:
                 if f.file:
                     f.file.delete(save=False)
             NodeFile.objects.filter(vault_file__in=files).delete()
+            CollectionFile.objects.filter(file__in=files).delete()
             files.delete()
             StorageService.release(user.id, total_size)
             return count
@@ -1017,6 +1026,7 @@ class FileService:
             raise ValueError("Provide a valid list of file_ids.")
         files = File.objects.filter(id__in=file_ids, user=user, is_archive=True)
         NodeFile.objects.filter(vault_file__in=files).update(status=NodeFile.Status.ACTIVE)
+        CollectionFile.objects.filter(file__in=files).update(status=CollectionFile.Status.ACTIVE)
         return files.update(is_archive=False, archived_at=None)
 
     @staticmethod
@@ -1185,20 +1195,27 @@ from .models import Collection, CollectionFile, File
 
 
 class CollectionService:
-
     @staticmethod
     def get_user_collections(user):
         return (
             Collection.objects.filter(user=user)
             .annotate(
                 total_files=Count(
-                    "collection_files__file",
-                    filter=Q(collection_files__file__is_deleted=False),
+                    "collection_files__file__id",
+                    filter=Q(
+                        collection_files__status=CollectionFile.Status.ACTIVE,
+                        collection_files__file__is_deleted=False,
+                        collection_files__file__is_archive=False
+                    ),
                     distinct=True
                 ),
                 total_size=Sum(
                     "collection_files__file__file_size",
-                    filter=Q(collection_files__file__is_deleted=False)
+                    filter=Q(
+                        collection_files__status=CollectionFile.Status.ACTIVE,
+                        collection_files__file__is_deleted=False,
+                        collection_files__file__is_archive=False
+                    )
                 ),
             )
             .order_by("-created_at")
@@ -1213,12 +1230,20 @@ class CollectionService:
                 .annotate(
                     total_files=Count(
                         "collection_files__file",
-                        filter=Q(collection_files__file__is_deleted=False),
+                        filter=Q(
+                            collection_files__status=CollectionFile.Status.ACTIVE,
+                            collection_files__file__is_deleted=False,
+                            collection_files__file__is_archive=False
+                        ),
                         distinct=True
                     ),
                     total_size=Sum(
                         "collection_files__file__file_size",
-                        filter=Q(collection_files__file__is_deleted=False)
+                        filter=Q(
+                            collection_files__status=CollectionFile.Status.ACTIVE,
+                            collection_files__file__is_deleted=False,
+                            collection_files__file__is_archive=False
+                        )
                     ),
                 )
                 .get(id=collection_id)

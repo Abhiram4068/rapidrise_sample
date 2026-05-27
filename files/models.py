@@ -346,6 +346,10 @@ class Collection(models.Model):
 
 
 class CollectionFile(models.Model):
+    class Status(models.TextChoices):
+        ACTIVE = "ACTIVE", "Active"
+        ARCHIVED = "ARCHIVED", "Archived"
+        TRASHED = "TRASHED", "Trashed"
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     collection = models.ForeignKey(
         Collection,
@@ -363,6 +367,11 @@ class CollectionFile(models.Model):
         on_delete=models.SET_NULL,
         null=True,
         related_name="added_collection_files"
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.ACTIVE
     )
 
     class Meta:

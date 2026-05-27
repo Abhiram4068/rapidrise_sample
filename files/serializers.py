@@ -539,10 +539,10 @@ class CollectionSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "created_at", "updated_at"]
 
     def get_total_files(self, obj):
-        return obj.get_total_files()
+        return getattr(obj, 'total_files', 0) or 0
 
     def get_total_size(self, obj):
-        return obj.get_total_size()
+        return getattr(obj, 'total_size', 0) or 0
 
 
 class CollectionFileSerializer(serializers.ModelSerializer):
