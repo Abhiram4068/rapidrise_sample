@@ -39,7 +39,9 @@ CORS_ALLOWED_ORIGINS = [
     "https://inv-rr-git-deploy-render-hosting-abhiram-s-projects4.vercel.app",
 ]
 CORS_ALLOW_CREDENTIALS = True
-SESSION_COOKIE_SAMESITE = "Lax"   # or "None" if cross-site
+SESSION_COOKIE_SAMESITE = "None"  
+CSRF_COOKIE_SAMESITE ="None" 
+AUTH_COOKIE_SAMESITE ="None"
 SESSION_COOKIE_SECURE = True     # True in production (HTTPS)
 CSRF_COOKIE_SECURE = True
 CSRF_TRUSTED_ORIGINS = [
