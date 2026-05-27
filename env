@@ -1,0 +1,19 @@
+EMAIL_BACKEND = django.core.mail.backends.smtp.EmailBackend
+EMAIL_HOST = smtp.gmail.com 
+EMAIL_PORT = 587 
+EMAIL_USE_TLS = True
+
+EMAIL_HOST_USER=abyram394@gmail.com
+EMAIL_HOST_PASSWORD=wyqykisicyxxbyce
+
+DEFAULT_FROM_EMAIL=EMAIL_HOST_USER
+
+# BACKEND_BASE_URL=http://127.0.0.1:8000
+# FRONTEND_BASE_URL=http://localhost:5173
+
+BACKEND_BASE_URL=http://10.10.14.236:8000
+FRONTEND_BASE_URL=http://10.10.14.236:5173
+
+CELERY_BROKER_URL="rediss://default:gQAAAAAAAYygAAIocDFkZTM0ZGE5ZjVlMGU0YjZiYmQyZDhlZDUwODQ0MzAwOHAxMTAxNTM2@lenient-moose-101536.upstash.io:6379"
+
+DATABASE_URL=postgresql://root:yAkD1V9wezvLdyBZ8iy0rOujZNiDjl0q@dpg-d8bd5kul51nc739jtaa0-a/hivedrive_db
