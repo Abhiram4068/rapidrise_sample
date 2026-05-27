@@ -908,7 +908,6 @@ class FileService:
         file_obj.save(update_fields=['is_deleted', 'deleted_at'])
         NodeFile.objects.filter(vault_file=file_obj).update(status=NodeFile.Status.TRASHED)
         updated = CollectionFile.objects.filter(file=file_obj).update(status=CollectionFile.Status.TRASHED)
-        print("CollectionFiles updated:", updated)
 
 
     @staticmethod
@@ -1631,7 +1630,7 @@ class FileShareService:
         ---
         If you did not expect this file, please ignore this email.
                 """
-        print(share_url)
+      
         try:
             send_mail(
                 subject=email_subject,

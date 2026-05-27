@@ -62,7 +62,6 @@ def auto_clear_trash():
     if count > 0:
         for file in trashed_files:
             file.delete()
-            print(f"Deleted trashed file: {file.id}")
     return f"Cleared {count} trashed files"
 
 
@@ -165,9 +164,9 @@ def auto_delete_users():
 @shared_task
 def auto_clear_old_admin_logs():
     from administration.models import AdminLog
-    threshold_date = timezone.now() - timedelta(minutes=2)
+    threshold_date = timezone.now() - timedelta(days=30)
     logs = AdminLog.objects.filter(timestamp__lte=threshold_date)
     count = logs.count()
     logs.delete()
-    print(f"Cleared {count} admin logs older than 1 year")
+    print(f"Cleared {count} admin logs older than 30 days")
     return f"Cleared {count} old admin logs"
