@@ -2469,7 +2469,7 @@ class StageService:
                 {
                     "detail": (
                         f'Cannot delete stage "{stage.name}" because it still contains '
-                        f"{node_count} active node(s). Move or archive those nodes first."
+                        f"{node_count} active node(s)."
                     )
                 }
             )

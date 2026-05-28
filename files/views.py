@@ -1878,6 +1878,13 @@ class NodeDetailView(APIView):
         node = self._get_node(pk, request.user)
         if not node:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        if NodeService.is_root_node(node):
+            return Response(
+                {"detail": "The root node of a thread cannot be deleted."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         try:
             NodeService.soft_delete(node, request.user)
         except DRFValidationError as e:
@@ -1886,7 +1893,7 @@ class NodeDetailView(APIView):
                 detail = detail[0]
             return Response({"detail": detail}, status=status.HTTP_400_BAD_REQUEST)
         return Response(
-            {"detail": f'Node "{node.title}" archived successfully.'},
+            {"detail": f'Node "{node.title}" deleted successfully.'},
             status=status.HTTP_200_OK,
         )
 
