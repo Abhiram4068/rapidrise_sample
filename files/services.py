@@ -1731,8 +1731,11 @@ class ViewFileShareService:
                 share = FileShareLink.objects.select_related('file', 'owner', 'bundle').get(
                     share_token=token
                 )
-                if not share.is_active:
+                if not share.is_active and share.revoked_at:
                     raise ValueError("This share link has been revoked.")
+                if share.permission == "one_time_download" and not share.is_active:
+                    raise ValueError("This share link has already been used.")
+                
                 if share.expiration_datetime and share.expiration_datetime < timezone.now():
                     raise ValueError("This share link has expired.")
 
