@@ -1690,12 +1690,23 @@ class ThreadListCreateView(APIView):
     def get(self, request):
         threads = ProjectThread.objects.filter(created_by=request.user)
         return Response(ThreadSerializer(threads, many=True).data)
-
     def post(self, request):
-        serializer = ThreadCreateSerializer(data=request.data)
+        serializer = ThreadCreateSerializer(
+            data=request.data,
+            context={"request": request}
+        )
+
         serializer.is_valid(raise_exception=True)
-        thread = ThreadService.create(request.user, serializer.validated_data)
-        return Response(ThreadSerializer(thread).data, status=status.HTTP_201_CREATED)
+
+        thread = ThreadService.create(
+            request.user,
+            serializer.validated_data
+        )
+
+        return Response(
+            ThreadSerializer(thread).data,
+            status=status.HTTP_201_CREATED,
+        )
 
 
 class ThreadDetailView(APIView):

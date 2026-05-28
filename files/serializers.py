@@ -1071,6 +1071,22 @@ class ThreadCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = ProjectThread
         fields = ["title", "description"]
+    def validate_title(self, value):
+        request = self.context.get("request")
+        title = value.strip()
+        if not title:
+            raise serializers.ValidationError(
+                "Thread title is required."
+            )
+        if ProjectThread.objects.filter(
+            created_by=request.user,
+            title__iexact=title
+        ).exists():
+            raise serializers.ValidationError(
+                "A thread with this title already exists."
+            )
+
+        return title
 
 
 # ─── Node ─────────────────────────────────────────────────────────────────────
