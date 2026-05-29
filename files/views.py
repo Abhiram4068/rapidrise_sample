@@ -1728,10 +1728,13 @@ class ThreadDetailView(APIView):
         thread = self._get_thread(pk, request.user)
         if not thread:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
-        serializer = ThreadSerializer(thread, data=request.data, partial=True)
+        serializer = ThreadSerializer(thread, data=request.data, partial=True,context={"request": request})
         serializer.is_valid(raise_exception=True)
         serializer.save()
-        return Response(serializer.data)
+        return Response({
+            "message": "Thread updated successfully.",
+            "data": serializer.data
+        })
 
     def delete(self, request, pk):
 
@@ -1784,6 +1787,12 @@ class ThreadStageListCreateView(APIView):
         serializer = ProjectStageSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         stage = serializer.save(thread=thread)
+        NodeActivity.objects.create(
+            stage=stage,
+            actor=request.user,
+            event_type=NodeActivity.EventType.CREATED,
+            message=f'Stage "{stage.name}" created.',
+        )
         data = ProjectStageSerializer(stage).data
         data["detail"] = f'Stage "{stage.name}" created successfully.'
         return Response(data, status=status.HTTP_201_CREATED)
@@ -1974,6 +1983,7 @@ class DependencyListCreateView(APIView):
             return Response({"detail": "Target node not found or belongs to a different thread."}, status=status.HTTP_404_NOT_FOUND)
 
         try:
+            source.refresh_from_db()
             dep = DependencyService.add_dependency(
                 source, target,
                 serializer.validated_data.get("dependency_type", NodeDependency.DependencyType.DEPENDS_ON),

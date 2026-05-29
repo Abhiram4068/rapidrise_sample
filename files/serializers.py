@@ -1054,11 +1054,33 @@ class ThreadSerializer(serializers.ModelSerializer):
     created_by = serializers.StringRelatedField(read_only=True)
     node_count = serializers.SerializerMethodField()
     file_count = serializers.SerializerMethodField()
-
     class Meta:
         model = ProjectThread
         fields = ["id", "title", "description", "created_by", "created_at", "node_count", "file_count"]
         read_only_fields = ["id", "created_by", "created_at"]
+    
+    def validate_title(self, value):
+        request = self.context.get("request")
+        title = value.strip()
+
+        if not title:
+            raise serializers.ValidationError(
+                "Thread title is required."
+            )
+
+        queryset = ProjectThread.objects.filter(
+            created_by=request.user,
+            title__iexact=title
+        )
+        if self.instance:
+            queryset = queryset.exclude(pk=self.instance.pk)
+
+        if queryset.exists():
+            raise serializers.ValidationError(
+                "A thread with this title already exists."
+            )
+
+        return title
 
     def get_node_count(self, obj):
         return obj.nodes.filter(is_deleted=False).count()
@@ -1186,10 +1208,11 @@ class DependencySerializer(serializers.ModelSerializer):
 class NodeFileSerializer(serializers.ModelSerializer):
     uploaded_by = serializers.StringRelatedField(read_only=True)
     file_url = serializers.SerializerMethodField()
+    content_type = serializers.CharField(source="vault_file.content_type", read_only=True)
 
     class Meta:
         model = NodeFile
-        fields = ["id", "node", "file", "original_name", "uploaded_by", "created_at", "file_url"]
+        fields = ["id", "node", "file", "original_name", "uploaded_by", "created_at", "file_url","content_type"]
         read_only_fields = ["id", "node", "original_name", "uploaded_by", "created_at"]
 
     def get_file_url(self, obj):

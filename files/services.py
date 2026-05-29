@@ -2587,9 +2587,8 @@ class NodeService:
             )
 
         with transaction.atomic():
-            node.is_deleted = True
-            node.status = ProjectNode.Status.ARCHIVED
-            node.save()
+            node_title = node.title 
+            node_id = node.id
  
             # Find all downstream nodes that depend on this one via BFS
             downstream_ids = set()
@@ -2605,18 +2604,14 @@ class NodeService:
                     if downstream_id not in downstream_ids:
                         downstream_ids.add(downstream_id)
                         queue.append(downstream_id)
+            node.delete()
  
             if downstream_ids:
                 ProjectNode.objects.filter(id__in=downstream_ids).update(
                     status=ProjectNode.Status.BLOCKED
                 )
  
-            NodeActivity.objects.create(
-                node=node,
-                actor=user,
-                event_type=NodeActivity.EventType.STATUS_CHANGED,
-                message=f'Node "{node.title}" archived. Downstream nodes marked as BLOCKED.',
-            )
+
  
     @staticmethod
     def update_position(node: ProjectNode, stage_id: int, row: int):
@@ -2706,10 +2701,6 @@ class DependencyService:
 
         if source.status == ProjectNode.Status.BLOCKED:
             raise DRFValidationError("Cannot create a dependency from a blocked node.")
-
-        if source.status == ProjectNode.Status.ARCHIVED:
-            raise DRFValidationError("Cannot create dependencies from completed/archived nodes.")
- 
         # Ensure only one outgoing dependency from source (cascading deactivation)
         old_deps = NodeDependency.objects.filter(source_node=source)
         if old_deps.exists():

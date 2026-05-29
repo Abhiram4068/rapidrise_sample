@@ -475,7 +475,7 @@ class ProjectNode(models.Model):
         NEEDS_REVIEW = "NEEDS_REVIEW", "Needs Review"
         OUTDATED = "OUTDATED", "Outdated"
         BLOCKED = "BLOCKED", "Blocked"
-        ARCHIVED = "ARCHIVED", "Archived"
+        COMPLETED = "COMPLETED", "Completed"
  
     thread = models.ForeignKey(ProjectThread, on_delete=models.CASCADE, related_name="nodes")
     title = models.CharField(max_length=255)
