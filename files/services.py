@@ -1454,7 +1454,7 @@ class FileShareService:
             
             for share in share_links:
                 subject = f"File shared with you: {bundle.title or 'RapidRise Package'}"
-                share_url = f"{settings.FRONTEND_URL}/files/public/{share.share_token}/"
+                share_url = f"{settings.FRONTEND_BASE_URL}/files/public/{share.share_token}/"
                 
                 message_text = f"""
                 Hello,
