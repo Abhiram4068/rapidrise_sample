@@ -70,7 +70,7 @@ def authenticate_and_generate_token(email:str, password:str)->dict:
     try:
         user=User.objects.get(email=email)
     except User.DoesNotExist:
-        raise AuthenticationError("User not found")
+        raise AuthenticationError("Invalid credentials")
     if not user.check_password(password):
         raise AuthenticationError("Invalid credentials")
     if not user.is_active:
@@ -2252,7 +2252,8 @@ class DashboardClass:
         active_links = FileShareLink.objects.filter(
             owner=user,
             accessed=False,
-            expiration_datetime__gt=now
+            expiration_datetime__gt=now,
+            file__isnull=False
         ).select_related('file').order_by('-created_at')[:3]
         
         # Recent Activities (combining recently uploaded files and shares)
@@ -2271,7 +2272,7 @@ class DashboardClass:
                 "is_active": True
             })
             
-        recent_shares = FileShareLink.objects.filter(owner=user).select_related('file').order_by('-created_at')[:5]
+        recent_shares = FileShareLink.objects.filter(owner=user, file__isnull=False).select_related('file').order_by('-created_at')[:5]
         for s in recent_shares:
             activities.append({
                 "type": "share",

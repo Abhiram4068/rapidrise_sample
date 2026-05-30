@@ -38,7 +38,7 @@ class RegisterSerializer(serializers.ModelSerializer):
         existing_user=User.objects.filter(email=email).first()
         if existing_user:
             if existing_user.account_status == User.AccountStatus.WAITING_FOR_APPROVAL:
-                raise serializers.ValidationError("Your account is waiting for approval. Please contact the administrator.")
+                raise serializers.ValidationError("Your account is waiting for approval.")
             elif existing_user.account_status == User.AccountStatus.BLOCKED:
                 raise serializers.ValidationError("Your account has been blocked by the administrator. Access to this platform has been permanently restricted until reviewed by the admin team. Only an administrator can revoke this restriction and restore account access.")
             elif existing_user.account_status == User.AccountStatus.DELETED:
