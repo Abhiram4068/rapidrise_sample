@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body { font-family: Arial, sans-serif; background-color: #f4f4f7; color: #51545e; margin: 0; padding: 0; }
+        .wrapper { width: 100%; background-color: #f4f4f7; padding: 20px 0; }
+        .container { max-width: 570px; margin: 0 auto; background-color: #ffffff; border: 1px solid #e8e5ef; border-radius: 5px; padding: 35px; }
+        .header { text-align: center; padding-bottom: 25px; border-bottom: 1px solid #e8e5ef; }
+        .header h1 { color: #333333; font-size: 22px; margin: 0; }
+        .content { padding: 25px 0; line-height: 1.6; }
+        .button-container { text-align: center; margin: 30px 0; }
+        .button { background-color: #22bc66; color: #ffffff !important; text-decoration: none; padding: 12px 25px; border-radius: 4px; display: inline-block; font-weight: bold; }
+        .footer { text-align: center; font-size: 12px; color: #a8a9ad; margin-top: 25px; line-height: 1.5; }
+        .important-box { background-color: #f9f9fb; border-left: 4px solid #e8e5ef; padding: 15px; margin-top: 20px; font-size: 13px; }
+    </style>
+</head>
+<body>
+    <div class="wrapper">
+        <div class="container">
+            <div class="header">
+                <h1>{{ template_title|default:"RapidRise Notification" }}</h1>
+            </div>
+
+            <div class="content">
+                <p>Hello,</p>
+                <p>{{ main_message }}</p>
+
+                {% if details %}
+                <div style="margin: 20px 0;">
+                    {% for label, value in details.items %}
+                        <strong>{{ label }}:</strong> {{ value }}<br>
+                    {% endfor %}
+                </div>
+                {% endif %}
+
+                {% if action_url %}
+                <div class="button-container">
+                    <a href="{{ action_url }}" class="button" target="_blank">{{ action_text|default:"Click Here" }}</a>
+                </div>
+                {% endif %}
+
+                <p>Best regards,<br><strong>RapidRise Team</strong></p>
+            </div>
+
+            {% if important_notes %}
+            <div class="important-box">
+                <strong>IMPORTANT:</strong>
+                <ul style="margin: 5px 0 0 0; padding-left: 20px;">
+                    {% for note in important_notes %}
+                        <li>{{ note }}</li>
+                    {% endfor %}
+                </ul>
+            </div>
+            {% endif %}
+
+            <div class="footer">
+                <p>If you did not expect this communication, please ignore this email.</p>
+                <p>&copy; 2026 RapidRise. All rights reserved.</p>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

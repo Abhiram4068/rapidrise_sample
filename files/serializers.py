@@ -117,6 +117,48 @@ class UserProfileSerializer(serializers.ModelSerializer):
     def get_storage_used_bytes(self, obj):
         return obj.storage_used_bytes
 
+import re
+from datetime import date
+class UserProfileUpdateSerializer(serializers.Serializer):
+    first_name = serializers.CharField(required=False)
+    last_name = serializers.CharField(required=False)
+    date_of_birth = serializers.DateField(required=False)
+
+    def validate_first_name(self, value):
+        value = value.strip()
+        if len(value) < 2:
+            raise serializers.ValidationError("First name must contain at least 2 characters.")
+        if len(value) > 50:
+            raise serializers.ValidationError("First name must not exceed 50 characters.")
+        if not re.match(r"^[A-Za-z\s'\-]+$", value):
+            raise serializers.ValidationError("First name should contain only letters, spaces, hyphens, or apostrophes.")
+        if re.search(r'\d', value):
+            raise serializers.ValidationError("First name should not contain numbers.")
+        return value
+
+    def validate_last_name(self, value):
+        value = value.strip()
+        if len(value) < 1:
+            raise serializers.ValidationError("Last name must contain at least 1 character.")
+        if len(value) > 50:
+            raise serializers.ValidationError("Last name must not exceed 50 characters.")
+        if not re.match(r"^[A-Za-z\s'\-]+$", value):
+            raise serializers.ValidationError("Last name should contain only letters, spaces, hyphens, or apostrophes.")
+        if re.search(r'\d', value):
+            raise serializers.ValidationError("Last name should not contain numbers.")
+        return value
+
+    def validate_date_of_birth(self, value):
+        today = date.today()
+        if value > today:
+            raise serializers.ValidationError("Date of birth cannot be a future date.")
+        age = today.year - value.year - ((today.month, today.day) < (value.month, value.day))
+        if age < 18:
+            raise serializers.ValidationError("You must be at least 18 years old.")
+        if age > 80:
+            raise serializers.ValidationError("Please enter a valid date of birth.")
+        return value
+
 class ChangePasswordSerialzier(serializers.Serializer):
     current_password=serializers.CharField(required=True, write_only=True)
     new_password=serializers.CharField(required=True, write_only=True)
@@ -784,10 +826,6 @@ class BulkFileShareSerializer(serializers.Serializer):
         allow_blank=True
     )
 
-    schedule_at = serializers.DateTimeField(
-        required=False
-    )
-
     permission = serializers.ChoiceField(
         choices=[
             'view_only',
@@ -852,31 +890,25 @@ class BulkFileShareSerializer(serializers.Serializer):
 
         return unique_emails
 
-
-    def validate_schedule_at(self, value):
-
-        if value <= timezone.now():
-            raise serializers.ValidationError(
-                "Schedule time must be in the future."
-            )
-
-        return value
-
-
     def validate(self, data):
+        request = self.context.get('request')
+        if request and request.data.get('schedule_at'):
+            raise serializers.ValidationError({
+                'schedule_at': (
+                    'Bulk share is sent immediately. '
+                    'Use single-file share or /files/<id>/share/schedule/ to schedule.'
+                ),
+            })
 
         permission = data.get('permission')
 
         download_limit = data.get('download_limit')
         view_limit = data.get('view_limit')
 
-
         if permission == 'one_time_download':
 
             data['download_limit'] = 1
             data['view_limit'] = None
-
-
 
         elif permission == 'view_download':
 

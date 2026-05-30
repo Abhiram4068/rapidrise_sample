@@ -96,7 +96,6 @@ def auto_generate_report():
     
     User = get_user_model()
     users = User.objects.filter(account_status=User.AccountStatus.ACTIVE, monthly_report_enabled=True)
-    print("[REPORT_GEN_V2] Starting monthly report generation...")
     
     for user in users:
         print(f"Users found for reports: {user.email}")
@@ -104,6 +103,8 @@ def auto_generate_report():
             print(f"Generating report for: {user.email}")
             
             shares, mails = ReportService.get_queryset(user, timeline='monthly', search='')
+            if not shares.exists() and not mails.exists():
+                continue
             data = ReportService.build_response_data(shares, mails)
             csv_buffer = ReportService.generate_csv(data)
             csv_content = csv_buffer.getvalue()

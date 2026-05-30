@@ -243,6 +243,7 @@ class ShareBundle(models.Model):
     download_limit = models.IntegerField(null=True, blank=True)
     view_limit = models.IntegerField(null=True, blank=True)
 
+    accessed_at = models.DateTimeField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
 

@@ -242,25 +242,15 @@ class UserProfileService:
     @staticmethod
     def update_profile(user: User, data: dict) -> User:
         updatable_fields = ["first_name", "last_name", "date_of_birth"]
-        if "date_of_birth" in data:
-            dob = data["date_of_birth"]
-            if isinstance(dob, str):
-                from datetime import datetime
-                dob = datetime.strptime(dob, "%Y-%m-%d").date()
-            today = date.today()
-            age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
-            if age < 18:
-                raise ValidationError({"date_of_birth": "You must be at least 18 years old."})
         fields_to_save = []
         for field in updatable_fields:
             if field in data:
                 setattr(user, field, data[field])
                 fields_to_save.append(field)
-
         if fields_to_save:
             user.save(update_fields=fields_to_save)
         return user
- 
+    
     # ── Designation Change Request ─────────────────────────────────────────
  
     @staticmethod
@@ -1450,9 +1440,14 @@ class FileShareService:
         from .models import ShareBundle, FileShareLink
         try:
             bundle = ShareBundle.objects.select_related('owner').get(id=bundle_id)
-            share_links = FileShareLink.objects.filter(bundle=bundle)
-            
+            share_links = FileShareLink.objects.filter(bundle=bundle).order_by('created_at')
+            sent_to = set()
+
             for share in share_links:
+                if share.recipient_email in sent_to:
+                    continue
+                sent_to.add(share.recipient_email)
+
                 subject = f"File shared with you: {bundle.title or 'RapidRise Package'}"
                 share_url = f"{settings.FRONTEND_BASE_URL}/files/public/{share.share_token}/"
                 
@@ -1492,7 +1487,6 @@ class FileShareService:
         permission,
         title='',
         message='',
-        schedule_at=None,
         download_limit=None,
         view_limit=None
     ):
@@ -1546,6 +1540,7 @@ class FileShareService:
         FileShareLink.objects.bulk_create([
             FileShareLink(
                 bundle=bundle,
+                file=item.file, 
                 owner=owner,
                 recipient_email=email.lower(),
                 share_token=FileShareService.generate_share_token(),
@@ -1555,6 +1550,7 @@ class FileShareService:
                 view_limit=view_limit
             )
             for email in recipient_emails
+            for item in bundle_items 
         ])
 
         # ---------------------------------
@@ -1580,22 +1576,12 @@ class FileShareService:
         zip_filename = f"share_bundle_{bundle.share_token[:8]}.zip"
         bundle.zip_file.save(zip_filename, ContentFile(zip_content), save=True)
 
-        # ---------------------------------
-        # EMAIL TASK
-        # ---------------------------------
-
-        if schedule_at:
-            from .tasks import send_bulk_share_email
-            send_bulk_share_email.apply_async(
-                args=[str(bundle.id)],
-                eta=schedule_at
-            )
-        else:
-            import threading
-            threading.Thread(
-                target=FileShareService.send_bulk_share_email,
-                args=(bundle.id,)
-            ).start()
+        # Bulk share always sends immediately (not via ScheduledMail).
+        import threading
+        threading.Thread(
+            target=FileShareService.send_bulk_share_email,
+            args=(bundle.id,),
+        ).start()
 
         return bundle
 
@@ -1716,6 +1702,115 @@ class FileShareService:
             
 
 class ViewFileShareService:
+    @staticmethod
+    def enforces_access_limits(share):
+        """Standard immediate single-file shares use view/download limits; zip bundles and scheduled delivery do not."""
+        from .models import FileShareLink, ShareBundle, ScheduledMail
+
+        if isinstance(share, ShareBundle):
+            return False
+        if getattr(share, 'bundle_id', None):
+            return False
+        return not ScheduledMail.objects.filter(
+            share=share,
+            status=ScheduledMail.Status.SENT,
+        ).exists()
+
+    @staticmethod
+    def get_public_share_type(share):
+        from .models import ShareBundle, ScheduledMail
+
+        if isinstance(share, ShareBundle) or getattr(share, 'bundle_id', None):
+            return 'zip_bundle'
+        if ScheduledMail.objects.filter(
+            share=share,
+            status=ScheduledMail.Status.SENT,
+        ).exists():
+            return 'scheduled'
+        return 'standard'
+
+    @staticmethod
+    def build_public_metadata(share):
+        from .models import ShareBundle, ScheduledMail
+
+        owner = share.owner
+        sender_name = owner.get_full_name() or owner.email
+        share_type = ViewFileShareService.get_public_share_type(share)
+        enforces_limits = ViewFileShareService.enforces_access_limits(share)
+        is_bundle = share_type == 'zip_bundle'
+
+        scheduled_mail = None
+        if share_type == 'scheduled':
+            scheduled_mail = (
+                ScheduledMail.objects.filter(
+                    share=share,
+                    status=ScheduledMail.Status.SENT,
+                )
+                .order_by('-sent_at')
+                .first()
+            )
+
+        if not is_bundle and hasattr(share, 'file') and share.file:
+            file_name = share.file.original_name
+            file_size = share.file.file_size
+            content_type = share.file.content_type
+            accessed = getattr(share, 'accessed', False)
+            file_count = 1
+        else:
+            bundle_obj = getattr(share, 'bundle', None) or share
+            file_name = getattr(bundle_obj, 'title', '') or 'Shared file package'
+            file_count = bundle_obj.items.count() if hasattr(bundle_obj, 'items') else 0
+            file_size = (
+                sum(item.file.file_size for item in bundle_obj.items.all())
+                if hasattr(bundle_obj, 'items')
+                else 0
+            )
+            content_type = 'application/zip'
+            accessed = (
+                getattr(share, 'accessed', False)
+                if not isinstance(share, ShareBundle)
+                else (share.download_count > 0)
+            )
+
+        bundle_obj = getattr(share, 'bundle', None) or (
+            share if isinstance(share, ShareBundle) else None
+        )
+
+        if isinstance(share, ShareBundle):
+            accessed_at = share.accessed_at
+        else:
+            accessed_at = getattr(share, 'accessed_at', None)
+
+        return {
+            'share_type': share_type,
+            'enforces_limits': enforces_limits,
+            'is_bundle': is_bundle,
+            'file_name': file_name,
+            'file_size': file_size,
+            'content_type': content_type,
+            'file_count': file_count,
+            'sender': sender_name,
+            'sender_name': sender_name,
+            'sender_email': owner.email,
+            'expiration': share.expiration_datetime,
+            'expiration_datetime': share.expiration_datetime,
+            'permission': share.permission,
+            'accessed': accessed,
+            'accessed_at': accessed_at,
+            'is_active': getattr(share, 'is_active', True),
+            'view_limit': share.view_limit if enforces_limits else None,
+            'view_count': share.view_count if enforces_limits else None,
+            'download_limit': share.download_limit if enforces_limits else None,
+            'download_count': share.download_count if enforces_limits else None,
+            'bundle_title': getattr(bundle_obj, 'title', '') or '' if bundle_obj else '',
+            'bundle_message': getattr(bundle_obj, 'message', '') or '' if bundle_obj else '',
+            'is_scheduled_delivery': share_type == 'scheduled',
+            'scheduled_for': scheduled_mail.scheduled_for if scheduled_mail else None,
+            'scheduled_title': scheduled_mail.title if scheduled_mail else '',
+            'scheduled_message': scheduled_mail.message if scheduled_mail else '',
+            'delivered_at': scheduled_mail.sent_at if scheduled_mail else None,
+        }
+
     def get_share_or_404(token, action=None):
             """
             Look up the token in FileShareLink first, then ShareBundle.
@@ -1733,22 +1828,24 @@ class ViewFileShareService:
                 )
                 if not share.is_active and share.revoked_at:
                     raise ValueError("This share link has been revoked.")
-                if share.permission == "one_time_download" and not share.is_active:
+                enforces = ViewFileShareService.enforces_access_limits(share)
+                if enforces and share.permission == "one_time_download" and not share.is_active:
                     raise ValueError("This share link has already been used.")
                 
                 if share.expiration_datetime and share.expiration_datetime < timezone.now():
                     raise ValueError("This share link has expired.")
 
-                # Action-aware limit checks
-                if action == 'view':
-                    if share.view_limit and share.view_count >= share.view_limit:
-                        raise ValueError("View limit reached for this share.")
-                elif action == 'download':
-                    if share.download_limit and share.download_count >= share.download_limit:
-                        raise ValueError("Download limit reached for this share.")
-                # action=None (metadata load): no hard-block, frontend handles button visibility
+                if enforces:
+                    if action == 'view':
+                        if share.view_limit and share.view_count >= share.view_limit:
+                            raise ValueError("View limit reached for this share.")
+                    elif action == 'download':
+                        if share.download_limit and share.download_count >= share.download_limit:
+                            raise ValueError("Download limit reached for this share.")
 
                 share.is_bundle = True if share.bundle else False
+                if action == 'view' and share.is_bundle:
+                    raise ValueError("This package can only be downloaded as a ZIP file.")
                 return share
 
             except FileShareLink.DoesNotExist:
@@ -1764,13 +1861,8 @@ class ViewFileShareService:
                 if bundle.expiration_datetime and bundle.expiration_datetime < timezone.now():
                     raise ValueError("This share link has expired.")
 
-                # Action-aware limit checks
                 if action == 'view':
-                    if bundle.view_limit and bundle.view_count >= bundle.view_limit:
-                        raise ValueError("View limit reached for this share.")
-                elif action == 'download':
-                    if bundle.download_limit and bundle.download_count >= bundle.download_limit:
-                        raise ValueError("Download limit reached for this share.")
+                    raise ValueError("This package can only be downloaded as a ZIP file.")
 
                 bundle.is_bundle = True
                 return bundle
@@ -1805,6 +1897,9 @@ class ViewFileShareService:
                 bundle.save(update_fields=['download_count'])
 
         # ── Deactivation check (runs after either action) ──────────────────────
+        if not ViewFileShareService.enforces_access_limits(share):
+            return
+
         # One-time download: deactivate immediately after first download
         if share.permission == 'one_time_download' and action == 'download':
             share.accessed = True
@@ -1859,11 +1954,31 @@ class ViewFileShareService:
         return target.zip_file.open("rb"), f"{target.title or 'shared_files'}.zip"
 
     @staticmethod
+    def record_link_opened(share):
+        """Set accessed_at the first time a recipient opens the public share URL (metadata GET)."""
+        from .models import ShareBundle
+
+        now = timezone.now()
+        if isinstance(share, ShareBundle):
+            if share.accessed_at is None:
+                share.accessed_at = now
+                share.save(update_fields=['accessed_at'])
+            return share
+
+        if share.accessed_at is None:
+            share.accessed_at = now
+            update_fields = ['accessed_at']
+            # One-time links: only mark accessed after download, not on page open.
+            if share.permission != 'one_time_download':
+                share.accessed = True
+                update_fields.append('accessed')
+            share.save(update_fields=update_fields)
+        return share
+
+    @staticmethod
     def mark_as_accessed(share):
-        if not share.accessed:
-            share.accessed=True
-            share.accessed_at=timezone.now()
-            share.save(update_fields=["accessed", "accessed_at"])
+        return ViewFileShareService.record_link_opened(share)
+
 import csv
 from io import StringIO
 from django.utils.timezone import localtime
