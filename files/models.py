@@ -74,8 +74,9 @@ class User(AbstractUser):
 
 
 def user_directory_path(instance, filename):
-    """Files uploaded to: media/userfiles/<user_id>/<filename>"""
-    return f"userfiles/{instance.user.id}/{filename}"
+    ext = filename.split('.')[-1]
+    unique_name = f"{uuid.uuid4()}.{ext}"
+    return f"userfiles/{instance.user.id}/{unique_name}"
 
 def default_expiry():
     return timezone.now() + timedelta(days=10)

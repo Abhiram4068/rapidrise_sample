@@ -17,7 +17,9 @@ import os
 from dotenv import load_dotenv
 from pathlib import Path
 from pythonjsonlogger import jsonlogger
-
+import cloudinary
+import cloudinary.uploader
+import cloudinary.api
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -63,6 +65,8 @@ INSTALLED_APPS = [
     'administration',
     'rest_framework',
     "corsheaders",
+    "cloudinary",
+    "cloudinary_storage",
 ]
 
 MIDDLEWARE = [
@@ -125,6 +129,13 @@ DATABASES = {
     'default': dj_database_url.config(
         default=os.environ.get("DATABASE_URL")
     )
+}
+
+
+STORAGES = {
+    "default": {
+        "BACKEND": "cloudinary_storage.storage.MediaCloudinaryStorage",
+    },
 }
 
 
@@ -323,4 +334,9 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": crontab(minute=0, hour=0, day_of_month="*/30"),
         # 'schedule': timedelta(minutes=60),
     },
+}
+CLOUDINARY_STORAGE = {
+    "CLOUD_NAME": os.getenv("CLOUDINARY_CLOUD_NAME"),
+    "API_KEY": os.getenv("CLOUDINARY_API_KEY"),
+    "API_SECRET": os.getenv("CLOUDINARY_API_SECRET"),
 }
