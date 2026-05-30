@@ -21,7 +21,14 @@ import io
 from datetime import timedelta
 import csv
 from io import StringIO
-from django.core.mail import send_mail, EmailMessage
+from .email_template import (
+    send_templated_mail,
+    send_templated_email,
+    send_templated_html_mail,
+    build_file_share_email_html,
+    build_bulk_share_email_html,
+    get_sender_designation,
+)
 from django.conf import settings
 from django.core.files.base import ContentFile
 from django.db.models import Sum, Count
@@ -134,7 +141,7 @@ class AuthService:
 
         def _send_email():
             try:
-                send_mail(
+                send_templated_mail(
                     subject="Password Reset Request — HiveDrive",
                     message=(
                         f"Hi {user.first_name or user.email},\n\n"
@@ -184,7 +191,7 @@ class AuthService:
         
         def send_email():
             try:
-                send_mail(
+                send_templated_mail(
                     subject="Your Account has been Deactivated",
                     message=f"Hi {user.first_name},\n\nYour account has been deactivated as per your request.\nIf this was a mistake, you can log in and submit a reactivation request to the admin.",
                     from_email=settings.DEFAULT_FROM_EMAIL,
@@ -1439,7 +1446,7 @@ class FileShareService:
     def send_bulk_share_email(bundle_id):
         from .models import ShareBundle, FileShareLink
         try:
-            bundle = ShareBundle.objects.select_related('owner').get(id=bundle_id)
+            bundle = ShareBundle.objects.select_related('owner', 'owner__designation').get(id=bundle_id)
             share_links = FileShareLink.objects.filter(bundle=bundle).order_by('created_at')
             sent_to = set()
 
@@ -1448,30 +1455,48 @@ class FileShareService:
                     continue
                 sent_to.add(share.recipient_email)
 
-                subject = f"File shared with you: {bundle.title or 'RapidRise Package'}"
+                owner = bundle.owner
+                sender_name = owner.get_full_name() or owner.email
+                designation = get_sender_designation(owner)
+                package_title = bundle.title or 'Shared file package'
+                subject = f"File shared with you: {package_title}"
                 share_url = f"{settings.FRONTEND_BASE_URL}/files/public/{share.share_token}/"
-                
-                message_text = f"""
-                Hello,
+                expires_on = bundle.expiration_datetime.strftime('%B %d, %Y at %I:%M %p')
+                file_count = bundle.items.count()
 
-                {bundle.owner.email} has shared a zip package with you.
-                
-                Title: {bundle.title or 'N/A'}
-                Message: {bundle.message or 'No message provided.'}
-                
-                You can access it here: {share_url}
-                
-                Best regards,
-                RapidRise Team
-                """
-                
-                email = EmailMessage(
-                    subject,
-                    message_text,
-                    settings.DEFAULT_FROM_EMAIL,
-                    [share.recipient_email]
+                plain_body = (
+                    f"Hi,\n\n"
+                    f"{sender_name} shared a ZIP package with you.\n\n"
+                    f"Package: {package_title}\n"
+                    f"Files: {file_count}\n"
+                    f"Expires: {expires_on}\n\n"
+                    f"Open the HTML version of this email and use the download button to access your files."
                 )
-                email.send()
+                if designation:
+                    plain_body = plain_body.replace(
+                        f"{sender_name} shared",
+                        f"{sender_name} ({designation}) shared",
+                        1,
+                    )
+
+                html_content = build_bulk_share_email_html(
+                    package_title=package_title,
+                    file_count=file_count,
+                    sender_name=sender_name,
+                    sender_email=owner.email,
+                    sender_designation=designation,
+                    personal_message=bundle.message,
+                    cta_url=share_url,
+                    expires_on=expires_on,
+                )
+
+                send_templated_email(
+                    subject,
+                    plain_body,
+                    settings.DEFAULT_FROM_EMAIL,
+                    [share.recipient_email],
+                    content_html=html_content,
+                )
             return True
         except Exception as e:
             logger.error(f"Error sending bulk share email: {e}")
@@ -1590,40 +1615,57 @@ class FileShareService:
         """
         send email
         """
-        email_subject = f"{share.owner.email} shared '{share.file.original_name}' with you"
+        owner = share.owner
+        sender_name = owner.get_full_name() or owner.email
+        designation = get_sender_designation(owner)
+        email_subject = f"{sender_name} shared '{share.file.original_name}' with you"
         share_url = f"{settings.FRONTEND_BASE_URL}/files/public/{share.share_token}/"
+        expires_on = share.expiration_datetime.strftime('%B %d, %Y at %I:%M %p')
+        file_size_mb = share.file.file_size / (1024 * 1024)
 
-        title_display = f"\n        Title: {title}" if title else ""
-        message_display = f"\n        Message from sender: \"{message}\"" if message else ""
+        plain_body = (
+            f"Hi,\n\n"
+            f"{sender_name} has shared a file with you.\n\n"
+            f"File: {share.file.original_name}\n"
+            f"Size: {file_size_mb:.2f} MB\n"
+        )
+        if title and title.strip():
+            plain_body += f"Title: {title.strip()}\n"
+        if message and message.strip():
+            plain_body += f"Message: {message.strip()}\n"
+        plain_body += (
+            f"Expires: {expires_on}\n\n"
+            f"Open the HTML version of this email and use the button to access the file.\n\n"
+            f"This link is personal. Recipient: {share.recipient_email}"
+        )
+        if designation:
+            plain_body = plain_body.replace(
+                f"{sender_name} has shared",
+                f"{sender_name} ({designation}) has shared",
+                1,
+            )
 
-        email_body = f"""
-        Hi,
+        html_content = build_file_share_email_html(
+            share_title=title or '',
+            file_name=share.file.original_name,
+            file_size_mb=file_size_mb,
+            sender_name=sender_name,
+            sender_email=owner.email,
+            sender_designation=designation,
+            personal_message=message,
+            cta_url=share_url,
+            expires_on=expires_on,
+            recipient_email=share.recipient_email,
+        )
 
-        {share.owner.email} has shared a file with you.
-
-        File: {share.file.original_name}
-        Size: {share.file.file_size / (1024 * 1024):.2f} MB{title_display}{message_display}
-
-        Click here to access the file:
-        {share_url}
-
-        This link will expire on {share.expiration_datetime.strftime('%B %d, %Y')}.
-
-        IMPORTANT:
-        - This link is personal and should not be shared with others.
-        - You will need to verify your email address ({share.recipient_email}) to access the file.
-
-        ---
-        If you did not expect this file, please ignore this email.
-                """
-      
         try:
-            send_mail(
+            send_templated_html_mail(
                 subject=email_subject,
-                message=email_body,
+                plain_message=plain_body,
+                content_html=html_content,
                 from_email=settings.DEFAULT_FROM_EMAIL,
                 recipient_list=[share.recipient_email],
-                fail_silently=False
+                fail_silently=False,
             )
             return True
         except Exception as e:

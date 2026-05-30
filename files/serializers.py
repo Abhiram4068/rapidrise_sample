@@ -302,41 +302,13 @@ class DeactivateAccountSerializer(serializers.Serializer):
 import magic
 from rest_framework import serializers
 from .services import StorageService
-
-ALLOWED_CONTENT_TYPES = {
-    "application/msword",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    "application/vnd.ms-excel",
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    "application/vnd.ms-powerpoint",
-    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-    "text/plain",
-    "text/csv",
-    "image/jpeg",
-    "image/png",
-    "application/pdf",
-    "image/webp",
-    "application/zip",
-    "application/x-zip-compressed",
-    "application/json",
-    "application/xml",
-    "text/xml",
-    "application/octet-stream"
-}
-
-MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024  # 100 MB per file
-MAX_STORAGE_BYTES   = 1 * 1024 * 1024 * 1024  # 1 GB per user
-MAX_CHUNK_BYTES     = 10 * 1024 * 1024  # must match frontend CHUNK_SIZE
-
-
-def _format_bytes(n: int) -> str:
-    MB = 1024 * 1024
-    GB = 1024 * 1024 * 1024
-    if n < MB:
-        return f"{n / 1024:.2f} KB"
-    elif n < GB:
-        return f"{n / MB:.2f} MB"
-    return f"{n / GB:.2f} GB"
+from .upload_validation import (
+    ALLOWED_CONTENT_TYPES,
+    MAX_CHUNK_BYTES,
+    MAX_FILE_SIZE_BYTES,
+    MAX_STORAGE_BYTES,
+    format_bytes as _format_bytes,
+)
 
 
 # ─── Chunk upload serializer ──────────────────────────────────────────────────
@@ -353,6 +325,13 @@ class ChunkUploadSerializer(serializers.Serializer):
     description  = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
     # ── per-field validators ──────────────────────────────────────────────────
+
+    def validate_content_type(self, value):
+        if value and value not in ALLOWED_CONTENT_TYPES:
+            raise serializers.ValidationError(
+                f"Content type '{value}' is not allowed."
+            )
+        return value
 
     def validate_file_size(self, value):
         if value > MAX_FILE_SIZE_BYTES:
@@ -421,14 +400,21 @@ class ChunkUploadSerializer(serializers.Serializer):
                 elif declared in ("", "application/octet-stream"):
                     data["content_type"] = detected
                 elif detected != declared:
-                    raise serializers.ValidationError(
-                        {
-                            "content_type": (
-                                f"Declared content type '{declared}' does not match "
-                                f"the detected type '{detected}'."
-                            )
-                        }
-                    )
+                    # Allow text/csv declared as text/plain (magic can't distinguish CSV)
+                    TEXT_ALIASES = {
+                        ("text/plain", "text/csv"),
+                        ("text/plain", "text/tab-separated-values"),
+                    }
+                    if (detected, declared) not in TEXT_ALIASES:
+                        raise serializers.ValidationError(
+                            {
+                                "content_type": (
+                                    f"Declared content type '{declared}' does not match "
+                                    f"the detected type '{detected}'."
+                                )
+                            }
+                        )
+                    data["content_type"] = declared  # trust the declared type for known aliases
 
         return data
 

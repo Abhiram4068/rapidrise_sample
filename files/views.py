@@ -25,7 +25,7 @@ from files.exceptions import StorageLimitExceeded
 from django.db.models import F, Sum, Q
 from rest_framework import serializers
 from .permissions import IsActiveAccount
-
+from .email_template import get_email_template
 
 import logging
 logger = logging.getLogger(__name__)
@@ -475,6 +475,8 @@ class ChunkUploadView(APIView):
                 }
             logger.warning(f"Chunk upload validation error | detail={detail}")
             return Response(detail, status=status.HTTP_409_CONFLICT)
+        except serializers.ValidationError as e:
+            return Response(e.detail, status=status.HTTP_400_BAD_REQUEST)
         except StorageLimitExceeded as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
