@@ -30,18 +30,22 @@ load_dotenv(BASE_DIR / ".env")
 SECRET_KEY = 'django-insecure-nci8&el^8m4l!d+!5#+hpq9#%orv79^t-+6-ppx_qy@o+dy3n_'
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = False
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = [
+    ".onrender.com"
+]
 CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5173",
+    "https://inv-rr-git-deploy-render-hosting-abhiram-s-projects4.vercel.app",
 ]
 CORS_ALLOW_CREDENTIALS = True
-SESSION_COOKIE_SAMESITE = "Lax"   # or "None" if cross-site
-SESSION_COOKIE_SECURE = False     # True in production (HTTPS)
-CSRF_COOKIE_SECURE = False
+SESSION_COOKIE_SAMESITE = "None"  
+CSRF_COOKIE_SAMESITE ="None" 
+AUTH_COOKIE_SAMESITE ="None"
+SESSION_COOKIE_SECURE = True     # True in production (HTTPS)
+CSRF_COOKIE_SECURE = True
 CSRF_TRUSTED_ORIGINS = [
-    "http://localhost:5173",
+    "https://inv-rr-git-deploy-render-hosting-abhiram-s-projects4.vercel.app",
 ]
 
 
@@ -62,8 +66,9 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
-      "corsheaders.middleware.CorsMiddleware",  
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
+    "corsheaders.middleware.CorsMiddleware",      
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -105,12 +110,21 @@ WSGI_APPLICATION = 'config.wsgi.application'
 #         'PORT':'3306'
 #     }
 # }
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.sqlite3',
+#         'NAME': BASE_DIR / 'db.sqlite3',
         
-    }
+#     }
+# }
+
+
+import dj_database_url
+
+DATABASES = {
+    'default': dj_database_url.config(
+        default=os.environ.get("DATABASE_URL")
+    )
 }
 
 
@@ -150,6 +164,7 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 STATIC_URL = 'static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "files.authentication.CookieJWTAuthentication",
@@ -170,7 +185,7 @@ AUTH_COOKIE_ACCESS = "access_token"
 AUTH_COOKIE_REFRESH = "refresh_token"
 AUTH_COOKIE_SECURE = not DEBUG
 AUTH_COOKIE_HTTP_ONLY = True
-AUTH_COOKIE_SAMESITE = "Lax"
+
 
 EMAIL_BACKEND = os.getenv("EMAIL_BACKEND")
 
