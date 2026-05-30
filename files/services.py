@@ -2155,24 +2155,22 @@ class ReportService:
         writer = csv.writer(buffer)
 
         writer.writerow([
-            "Type",
-            "ID",
-            "File Name",
+            "Share type",
+            "File name",
             "Recipient",
             "Status",
-            "Sent At",
+            "Sent at",
             "Accessed"
         ])
 
         for row in data:
             writer.writerow([
                 row["type"],
-                row["id"],
                 row["file_name"],
                 row["recipient"],
                 row["status"],
-                str(row["sent_at"]),
-                row["accessed"],
+                row["sent_at"].strftime("%d %b %Y, %I:%M %p"),
+                "Yes" if row["accessed"] else "No"
             ])
 
         buffer.seek(0)
