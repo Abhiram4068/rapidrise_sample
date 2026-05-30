@@ -169,8 +169,6 @@ class FileShareLink(models.Model):
         on_delete=models.CASCADE,
         related_name='shares',
         db_index=True,
-        null=True,
-        blank=True
     )
     owner=models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -246,6 +244,7 @@ class ShareBundle(models.Model):
     download_limit = models.IntegerField(null=True, blank=True)
     view_limit = models.IntegerField(null=True, blank=True)
 
+    accessed_at = models.DateTimeField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
 
@@ -476,7 +475,7 @@ class ProjectNode(models.Model):
         NEEDS_REVIEW = "NEEDS_REVIEW", "Needs Review"
         OUTDATED = "OUTDATED", "Outdated"
         BLOCKED = "BLOCKED", "Blocked"
-        ARCHIVED = "ARCHIVED", "Archived"
+        COMPLETED = "COMPLETED", "Completed"
  
     thread = models.ForeignKey(ProjectThread, on_delete=models.CASCADE, related_name="nodes")
     title = models.CharField(max_length=255)

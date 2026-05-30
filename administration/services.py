@@ -389,7 +389,7 @@ class AdminDashboardService:
         pending_reactivation_requests = ReactivationRequest.objects.filter(is_resolved=False).count()
         
         # User stats
-        active_users = User.objects.filter(account_status=User.AccountStatus.ACTIVE).count()
+        active_users = User.objects.filter(account_status=User.AccountStatus.ACTIVE, is_superuser=False, is_staff=False).count()
         deactivated_users = User.objects.filter(account_status=User.AccountStatus.DEACTIVATED).count()
         blocked_users = User.objects.filter(account_status=User.AccountStatus.BLOCKED).count()
         pending_registration_approvals = User.objects.filter(account_status=User.AccountStatus.WAITING_FOR_APPROVAL).count()
