@@ -12,9 +12,9 @@ from django.http import FileResponse
 from django.core.exceptions import ValidationError, PermissionDenied
 from files.serializers import (
     RegisterSerializer, LoginSerializer, UserProfileSerializer,ChangePasswordSerialzier, DeactivateAccountSerializer, ChunkUploadSerializer, ChunkUploadStatusQuerySerializer, ChunkUploadControlSerializer, FilesListSerializer, FileUpdateSerializer ,FileShareSerializer, FileShareCreateSerializer, PublicFileSerializer,CollectionSerializer, CollectionFileSerializer
-    ,ScheduledMailSerializer, FileShareListSerializer, ReportQuerySerializer, ToggleMonthlyReportSerializer, DesignationSerializer, ResetPasswordSerializer, ForgotPasswordSerializer, ReactivationRequestSerializer, DesignationChangeRequestListSerializer, DesignationChangeRequestCreateSerializer, DesignationChangeRequestAdminSerializer
+    ,ScheduledMailSerializer, FileShareListSerializer, ReportQuerySerializer, ToggleMonthlyReportSerializer, DesignationSerializer, ResetPasswordSerializer, ForgotPasswordSerializer, UserProfileUpdateSerializer,ReactivationRequestSerializer, DesignationChangeRequestListSerializer, DesignationChangeRequestCreateSerializer, DesignationChangeRequestAdminSerializer
     )
-from files.models import ReactivationRequest, DesignationChangeRequest, ChunkUploadSession
+from files.models import ReactivationRequest, ShareBundle, ChunkUploadSession
 from files.services import (
     create_user, authenticate_and_generate_token, AuthenticationError ,AuthService, UserProfileService, FileService, ChunkUploadService, FileShareService, ViewFileShareService, CollectionService, ReportService, AccountService, ThreadService, StageService, NodeService, DependencyService
     )
@@ -25,7 +25,7 @@ from files.exceptions import StorageLimitExceeded
 from django.db.models import F, Sum, Q
 from rest_framework import serializers
 from .permissions import IsActiveAccount
-
+from .email_template import get_email_template
 
 import logging
 logger = logging.getLogger(__name__)
@@ -233,10 +233,11 @@ class UserProfileView(APIView):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     def patch(self, request) -> Response:
-        user = UserProfileService.update_profile(user=request.user, data=request.data)
+        write_serializer = UserProfileUpdateSerializer(data=request.data)
+        write_serializer.is_valid(raise_exception=True)
+        user = UserProfileService.update_profile(user=request.user, data=write_serializer.validated_data)
         serializer = self.serializer_class(user, context={"request": request})
         return Response(serializer.data, status=status.HTTP_200_OK)
-
 class ChangePasswordView(APIView):
     permission_classes=[IsAuthenticated]
     serializer_class=ChangePasswordSerialzier
@@ -474,6 +475,8 @@ class ChunkUploadView(APIView):
                 }
             logger.warning(f"Chunk upload validation error | detail={detail}")
             return Response(detail, status=status.HTTP_409_CONFLICT)
+        except serializers.ValidationError as e:
+            return Response(e.detail, status=status.HTTP_400_BAD_REQUEST)
         except StorageLimitExceeded as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
@@ -1032,8 +1035,6 @@ from .services import FileShareService
 from .serializers import ShareBundleSerializer
 
 
-import traceback
-
 class BulkFileShareView(APIView):
 
     permission_classes = [IsActiveAccount]
@@ -1047,8 +1048,6 @@ class BulkFileShareView(APIView):
 
         serializer.is_valid(raise_exception=True)
 
-        print(serializer.validated_data)
-
         try:
 
             bundle = FileShareService.create_bulk_share(
@@ -1059,7 +1058,6 @@ class BulkFileShareView(APIView):
                 permission=serializer.validated_data['permission'],
                 title=serializer.validated_data.get('title', ''),
                 message=serializer.validated_data.get('message', ''),
-                schedule_at=serializer.validated_data.get('schedule_at'),
                 download_limit=serializer.validated_data.get('download_limit'),
                 view_limit=serializer.validated_data.get('view_limit')
             )
@@ -1083,9 +1081,6 @@ class BulkFileShareView(APIView):
             )
 
         except ValueError as e:
-
-            print("ValueError:", str(e))
-
             return Response(
                 {
                     "error": str(e)
@@ -1093,11 +1088,7 @@ class BulkFileShareView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        except Exception as e:
-
-            print("Unexpected Error:", str(e))
-            traceback.print_exc()
-
+        except Exception:
             return Response(
                 {
                     "error": "Something went wrong while sharing files."
@@ -1251,40 +1242,11 @@ class PublicFileAccessView(APIView):
 
         action = request.query_params.get('action')
         if not action:
-            # Return JSON metadata for initial verification & rendering
-            owner = share.owner
-            sender_name = owner.get_full_name() or owner.email
-            sender_email = owner.email
-
-            is_bundle = getattr(share, 'is_bundle', False)
-            if not is_bundle and hasattr(share, 'file') and share.file:
-                file_name = share.file.original_name
-                file_size = share.file.file_size
-                content_type = share.file.content_type
-                accessed = getattr(share, 'accessed', False)
-            else:
-                bundle_obj = getattr(share, 'bundle', None) or share
-                file_name = getattr(bundle_obj, 'title', '') or "Bulk Share Package"
-                file_size = sum(item.file.file_size for item in bundle_obj.items.all()) if hasattr(bundle_obj, 'items') else 0
-                content_type = "application/zip"
-                accessed = getattr(share, 'accessed', False) if not isinstance(share, ShareBundle) else (share.download_count > 0)
-
-            return Response({
-                'file_name': file_name,
-                'file_size': file_size,
-                'content_type': content_type,
-                'sender': sender_name,
-                'sender_name': sender_name,
-                'sender_email': sender_email,
-                'expiration': share.expiration_datetime,
-                'expiration_datetime': share.expiration_datetime,
-                'permission': share.permission,
-                'accessed': accessed,
-                'view_limit': share.view_limit,
-                'view_count': share.view_count,
-                'download_limit': share.download_limit,
-                'download_count': share.download_count,
-            }, status=status.HTTP_200_OK)
+            share = ViewFileShareService.record_link_opened(share)
+            return Response(
+                ViewFileShareService.build_public_metadata(share),
+                status=status.HTTP_200_OK,
+            )
 
         # Increment access count and return file only when action is requested
         ViewFileShareService.increment_access_counts(share, action)
@@ -1497,6 +1459,12 @@ class ReportDownloadView(APIView):
         # Fetch data
         shares, mails = ReportService.get_queryset(request.user, timeline, search)
 
+        if not shares.exists() and not mails.exists():
+            return Response(
+                {"detail": "No activity found for the selected period."},
+                status=status.HTTP_200_OK
+            )
+
         # Build response
         data = ReportService.build_response_data(shares, mails)
 
@@ -1519,6 +1487,7 @@ class ReportDownloadView(APIView):
         paginated_response = paginator.get_paginated_response(page)
         paginated_response.data["dashboard"] = dashboard
         paginated_response.data["is_toggle"] = request.user.monthly_report_enabled
+
 
         return paginated_response
 
@@ -1690,12 +1659,23 @@ class ThreadListCreateView(APIView):
     def get(self, request):
         threads = ProjectThread.objects.filter(created_by=request.user)
         return Response(ThreadSerializer(threads, many=True).data)
-
     def post(self, request):
-        serializer = ThreadCreateSerializer(data=request.data)
+        serializer = ThreadCreateSerializer(
+            data=request.data,
+            context={"request": request}
+        )
+
         serializer.is_valid(raise_exception=True)
-        thread = ThreadService.create(request.user, serializer.validated_data)
-        return Response(ThreadSerializer(thread).data, status=status.HTTP_201_CREATED)
+
+        thread = ThreadService.create(
+            request.user,
+            serializer.validated_data
+        )
+
+        return Response(
+            ThreadSerializer(thread).data,
+            status=status.HTTP_201_CREATED,
+        )
 
 
 class ThreadDetailView(APIView):
@@ -1717,10 +1697,13 @@ class ThreadDetailView(APIView):
         thread = self._get_thread(pk, request.user)
         if not thread:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
-        serializer = ThreadSerializer(thread, data=request.data, partial=True)
+        serializer = ThreadSerializer(thread, data=request.data, partial=True,context={"request": request})
         serializer.is_valid(raise_exception=True)
         serializer.save()
-        return Response(serializer.data)
+        return Response({
+            "message": "Thread updated successfully.",
+            "data": serializer.data
+        })
 
     def delete(self, request, pk):
 
@@ -1773,6 +1756,12 @@ class ThreadStageListCreateView(APIView):
         serializer = ProjectStageSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         stage = serializer.save(thread=thread)
+        NodeActivity.objects.create(
+            stage=stage,
+            actor=request.user,
+            event_type=NodeActivity.EventType.CREATED,
+            message=f'Stage "{stage.name}" created.',
+        )
         data = ProjectStageSerializer(stage).data
         data["detail"] = f'Stage "{stage.name}" created successfully.'
         return Response(data, status=status.HTTP_201_CREATED)
@@ -1878,6 +1867,13 @@ class NodeDetailView(APIView):
         node = self._get_node(pk, request.user)
         if not node:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        if NodeService.is_root_node(node):
+            return Response(
+                {"detail": "The root node of a thread cannot be deleted."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         try:
             NodeService.soft_delete(node, request.user)
         except DRFValidationError as e:
@@ -1886,7 +1882,7 @@ class NodeDetailView(APIView):
                 detail = detail[0]
             return Response({"detail": detail}, status=status.HTTP_400_BAD_REQUEST)
         return Response(
-            {"detail": f'Node "{node.title}" archived successfully.'},
+            {"detail": f'Node "{node.title}" deleted successfully.'},
             status=status.HTTP_200_OK,
         )
 
@@ -1956,6 +1952,7 @@ class DependencyListCreateView(APIView):
             return Response({"detail": "Target node not found or belongs to a different thread."}, status=status.HTTP_404_NOT_FOUND)
 
         try:
+            source.refresh_from_db()
             dep = DependencyService.add_dependency(
                 source, target,
                 serializer.validated_data.get("dependency_type", NodeDependency.DependencyType.DEPENDS_ON),

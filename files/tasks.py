@@ -96,7 +96,6 @@ def auto_generate_report():
     
     User = get_user_model()
     users = User.objects.filter(account_status=User.AccountStatus.ACTIVE, monthly_report_enabled=True)
-    print("[REPORT_GEN_V2] Starting monthly report generation...")
     
     for user in users:
         print(f"Users found for reports: {user.email}")
@@ -104,6 +103,8 @@ def auto_generate_report():
             print(f"Generating report for: {user.email}")
             
             shares, mails = ReportService.get_queryset(user, timeline='monthly', search='')
+            if not shares.exists() and not mails.exists():
+                continue
             data = ReportService.build_response_data(shares, mails)
             csv_buffer = ReportService.generate_csv(data)
             csv_content = csv_buffer.getvalue()
@@ -128,14 +129,29 @@ def auto_generate_report():
             print(f"Report saved for {user.email}: {file_name}")
             
             # Also email the CSV to the user
-            from django.core.mail import EmailMessage
-            email = EmailMessage(
-                subject="Your Monthly Report",
-                body=f"Hello,\n\nPlease find your monthly report ({file_name}) attached for your review. It has also been saved to your 'Files' section in the app.",
-                to=[user.email],
+            from django.conf import settings
+            from .email_template import build_simple_notification_html, send_templated_email
+            plain_body = (
+                f"Hello,\n\n"
+                f"Please find your monthly report ({file_name}) attached for your review. "
+                f"It has also been saved to your 'Files' section in the app."
             )
-            email.attach(file_name, csv_content, "text/csv")
-            email.send()
+            send_templated_email(
+                subject="Your Monthly Report",
+                body=plain_body,
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                to=[user.email],
+                attachments=[(file_name, csv_content, "text/csv")],
+                content_html=build_simple_notification_html(
+                    eyebrow='Monthly report',
+                    title='Your report is ready',
+                    paragraphs=[
+                        'Your monthly activity report has been generated and attached to this email.',
+                        f'File name: {file_name}',
+                        "A copy has also been saved to your Files section in HiveDrive.",
+                    ],
+                ),
+            )
             
             print(f"Report emailed to {user.email}")
             

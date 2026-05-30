@@ -38,7 +38,7 @@ class RegisterSerializer(serializers.ModelSerializer):
         existing_user=User.objects.filter(email=email).first()
         if existing_user:
             if existing_user.account_status == User.AccountStatus.WAITING_FOR_APPROVAL:
-                raise serializers.ValidationError("Your account is waiting for approval. Please contact the administrator.")
+                raise serializers.ValidationError("Your account is waiting for approval.")
             elif existing_user.account_status == User.AccountStatus.BLOCKED:
                 raise serializers.ValidationError("Your account has been blocked by the administrator. Access to this platform has been permanently restricted until reviewed by the admin team. Only an administrator can revoke this restriction and restore account access.")
             elif existing_user.account_status == User.AccountStatus.DELETED:
@@ -116,6 +116,48 @@ class UserProfileSerializer(serializers.ModelSerializer):
 
     def get_storage_used_bytes(self, obj):
         return obj.storage_used_bytes
+
+import re
+from datetime import date
+class UserProfileUpdateSerializer(serializers.Serializer):
+    first_name = serializers.CharField(required=False)
+    last_name = serializers.CharField(required=False)
+    date_of_birth = serializers.DateField(required=False)
+
+    def validate_first_name(self, value):
+        value = value.strip()
+        if len(value) < 2:
+            raise serializers.ValidationError("First name must contain at least 2 characters.")
+        if len(value) > 50:
+            raise serializers.ValidationError("First name must not exceed 50 characters.")
+        if not re.match(r"^[A-Za-z\s'\-]+$", value):
+            raise serializers.ValidationError("First name should contain only letters, spaces, hyphens, or apostrophes.")
+        if re.search(r'\d', value):
+            raise serializers.ValidationError("First name should not contain numbers.")
+        return value
+
+    def validate_last_name(self, value):
+        value = value.strip()
+        if len(value) < 1:
+            raise serializers.ValidationError("Last name must contain at least 1 character.")
+        if len(value) > 50:
+            raise serializers.ValidationError("Last name must not exceed 50 characters.")
+        if not re.match(r"^[A-Za-z\s'\-]+$", value):
+            raise serializers.ValidationError("Last name should contain only letters, spaces, hyphens, or apostrophes.")
+        if re.search(r'\d', value):
+            raise serializers.ValidationError("Last name should not contain numbers.")
+        return value
+
+    def validate_date_of_birth(self, value):
+        today = date.today()
+        if value > today:
+            raise serializers.ValidationError("Date of birth cannot be a future date.")
+        age = today.year - value.year - ((today.month, today.day) < (value.month, value.day))
+        if age < 18:
+            raise serializers.ValidationError("You must be at least 18 years old.")
+        if age > 80:
+            raise serializers.ValidationError("Please enter a valid date of birth.")
+        return value
 
 class ChangePasswordSerialzier(serializers.Serializer):
     current_password=serializers.CharField(required=True, write_only=True)
@@ -260,41 +302,13 @@ class DeactivateAccountSerializer(serializers.Serializer):
 import magic
 from rest_framework import serializers
 from .services import StorageService
-
-ALLOWED_CONTENT_TYPES = {
-    "application/msword",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    "application/vnd.ms-excel",
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    "application/vnd.ms-powerpoint",
-    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-    "text/plain",
-    "text/csv",
-    "image/jpeg",
-    "image/png",
-    "application/pdf",
-    "image/webp",
-    "application/zip",
-    "application/x-zip-compressed",
-    "application/json",
-    "application/xml",
-    "text/xml",
-    "application/octet-stream"
-}
-
-MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024  # 100 MB per file
-MAX_STORAGE_BYTES   = 1 * 1024 * 1024 * 1024  # 1 GB per user
-MAX_CHUNK_BYTES     = 10 * 1024 * 1024  # must match frontend CHUNK_SIZE
-
-
-def _format_bytes(n: int) -> str:
-    MB = 1024 * 1024
-    GB = 1024 * 1024 * 1024
-    if n < MB:
-        return f"{n / 1024:.2f} KB"
-    elif n < GB:
-        return f"{n / MB:.2f} MB"
-    return f"{n / GB:.2f} GB"
+from .upload_validation import (
+    ALLOWED_CONTENT_TYPES,
+    MAX_CHUNK_BYTES,
+    MAX_FILE_SIZE_BYTES,
+    MAX_STORAGE_BYTES,
+    format_bytes as _format_bytes,
+)
 
 
 # ─── Chunk upload serializer ──────────────────────────────────────────────────
@@ -311,6 +325,13 @@ class ChunkUploadSerializer(serializers.Serializer):
     description  = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
     # ── per-field validators ──────────────────────────────────────────────────
+
+    def validate_content_type(self, value):
+        if value and value not in ALLOWED_CONTENT_TYPES:
+            raise serializers.ValidationError(
+                f"Content type '{value}' is not allowed."
+            )
+        return value
 
     def validate_file_size(self, value):
         if value > MAX_FILE_SIZE_BYTES:
@@ -379,14 +400,21 @@ class ChunkUploadSerializer(serializers.Serializer):
                 elif declared in ("", "application/octet-stream"):
                     data["content_type"] = detected
                 elif detected != declared:
-                    raise serializers.ValidationError(
-                        {
-                            "content_type": (
-                                f"Declared content type '{declared}' does not match "
-                                f"the detected type '{detected}'."
-                            )
-                        }
-                    )
+                    # Allow text/csv declared as text/plain (magic can't distinguish CSV)
+                    TEXT_ALIASES = {
+                        ("text/plain", "text/csv"),
+                        ("text/plain", "text/tab-separated-values"),
+                    }
+                    if (detected, declared) not in TEXT_ALIASES:
+                        raise serializers.ValidationError(
+                            {
+                                "content_type": (
+                                    f"Declared content type '{declared}' does not match "
+                                    f"the detected type '{detected}'."
+                                )
+                            }
+                        )
+                    data["content_type"] = declared  # trust the declared type for known aliases
 
         return data
 
@@ -784,10 +812,6 @@ class BulkFileShareSerializer(serializers.Serializer):
         allow_blank=True
     )
 
-    schedule_at = serializers.DateTimeField(
-        required=False
-    )
-
     permission = serializers.ChoiceField(
         choices=[
             'view_only',
@@ -852,31 +876,25 @@ class BulkFileShareSerializer(serializers.Serializer):
 
         return unique_emails
 
-
-    def validate_schedule_at(self, value):
-
-        if value <= timezone.now():
-            raise serializers.ValidationError(
-                "Schedule time must be in the future."
-            )
-
-        return value
-
-
     def validate(self, data):
+        request = self.context.get('request')
+        if request and request.data.get('schedule_at'):
+            raise serializers.ValidationError({
+                'schedule_at': (
+                    'Bulk share is sent immediately. '
+                    'Use single-file share or /files/<id>/share/schedule/ to schedule.'
+                ),
+            })
 
         permission = data.get('permission')
 
         download_limit = data.get('download_limit')
         view_limit = data.get('view_limit')
 
-
         if permission == 'one_time_download':
 
             data['download_limit'] = 1
             data['view_limit'] = None
-
-
 
         elif permission == 'view_download':
 
@@ -1054,11 +1072,33 @@ class ThreadSerializer(serializers.ModelSerializer):
     created_by = serializers.StringRelatedField(read_only=True)
     node_count = serializers.SerializerMethodField()
     file_count = serializers.SerializerMethodField()
-
     class Meta:
         model = ProjectThread
         fields = ["id", "title", "description", "created_by", "created_at", "node_count", "file_count"]
         read_only_fields = ["id", "created_by", "created_at"]
+    
+    def validate_title(self, value):
+        request = self.context.get("request")
+        title = value.strip()
+
+        if not title:
+            raise serializers.ValidationError(
+                "Thread title is required."
+            )
+
+        queryset = ProjectThread.objects.filter(
+            created_by=request.user,
+            title__iexact=title
+        )
+        if self.instance:
+            queryset = queryset.exclude(pk=self.instance.pk)
+
+        if queryset.exists():
+            raise serializers.ValidationError(
+                "A thread with this title already exists."
+            )
+
+        return title
 
     def get_node_count(self, obj):
         return obj.nodes.filter(is_deleted=False).count()
@@ -1071,6 +1111,22 @@ class ThreadCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = ProjectThread
         fields = ["title", "description"]
+    def validate_title(self, value):
+        request = self.context.get("request")
+        title = value.strip()
+        if not title:
+            raise serializers.ValidationError(
+                "Thread title is required."
+            )
+        if ProjectThread.objects.filter(
+            created_by=request.user,
+            title__iexact=title
+        ).exists():
+            raise serializers.ValidationError(
+                "A thread with this title already exists."
+            )
+
+        return title
 
 
 # ─── Node ─────────────────────────────────────────────────────────────────────
@@ -1170,10 +1226,11 @@ class DependencySerializer(serializers.ModelSerializer):
 class NodeFileSerializer(serializers.ModelSerializer):
     uploaded_by = serializers.StringRelatedField(read_only=True)
     file_url = serializers.SerializerMethodField()
+    content_type = serializers.CharField(source="vault_file.content_type", read_only=True)
 
     class Meta:
         model = NodeFile
-        fields = ["id", "node", "file", "original_name", "uploaded_by", "created_at", "file_url"]
+        fields = ["id", "node", "file", "original_name", "uploaded_by", "created_at", "file_url","content_type"]
         read_only_fields = ["id", "node", "original_name", "uploaded_by", "created_at"]
 
     def get_file_url(self, obj):

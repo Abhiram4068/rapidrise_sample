@@ -42,3 +42,4 @@ celerybeat-schedule
 # Temporary files
 temp_uploads/
 uploads
+share_bundles/
