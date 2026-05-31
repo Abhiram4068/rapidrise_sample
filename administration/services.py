@@ -1,3 +1,4 @@
+from files.models import DesignationChangeRequest
 from django.utils import timezone
 from rest_framework.exceptions import NotFound
 from django.contrib.auth import get_user_model
@@ -387,12 +388,20 @@ class AdminDashboardService:
         
         total_files = File.objects.count()
         pending_reactivation_requests = ReactivationRequest.objects.filter(is_resolved=False).count()
+        pending_designation_change_requests = DesignationChangeRequest.objects.filter(status=DesignationChangeRequest.StatusChoices.PENDING).count()
         
         # User stats
         active_users = User.objects.filter(account_status=User.AccountStatus.ACTIVE, is_superuser=False, is_staff=False).count()
         deactivated_users = User.objects.filter(account_status=User.AccountStatus.DEACTIVATED).count()
         blocked_users = User.objects.filter(account_status=User.AccountStatus.BLOCKED).count()
         pending_registration_approvals = User.objects.filter(account_status=User.AccountStatus.WAITING_FOR_APPROVAL).count()
+
+        recent_logs = list(
+            AdminLog.objects.select_related('admin', 'target_user')
+            .order_by('-timestamp')[:3]
+            .values('activity_type', 'action_details', 'timestamp', 
+                    'admin__email', 'target_user__email')
+        )
         
         # Idle users (e.g., active but haven't logged in for 30 days)
         thirty_days_ago = timezone.now() - timedelta(days=30)
@@ -409,7 +418,9 @@ class AdminDashboardService:
             "blocked_users": blocked_users,
             "idle_users": idle_users,
             "pending_deactivation_requests": pending_reactivation_requests,
-            "pending_registration_approvals": pending_registration_approvals
+            "pending_registration_approvals": pending_registration_approvals,
+            "pending_designation_change_requests":pending_designation_change_requests,
+            "recent_logs": recent_logs,
         }
 
 
