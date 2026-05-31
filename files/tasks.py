@@ -1,7 +1,8 @@
 from celery import shared_task
 from django.utils import timezone
 from datetime import timedelta
-
+import logging
+logger = logging.getLogger(__name__)
 from .models import ScheduledMail, File
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)
@@ -84,7 +85,7 @@ def auto_clear_scheduled_mails_history():
         for mail in scheduled_mails:
             mail_id = mail.id
             mail.delete()
-            print(f"Deleted scheduled mail history: {mail_id}")
+            logger.info(f"Deleted scheduled mail history: {mail_id}")
     return f"Cleared {count} scheduled mails history"
     
 @shared_task
@@ -98,9 +99,9 @@ def auto_generate_report():
     users = User.objects.filter(account_status=User.AccountStatus.ACTIVE, monthly_report_enabled=True)
     
     for user in users:
-        print(f"Users found for reports: {user.email}")
+        logger.info(f"Users found for reports: {user.email}")
         try:
-            print(f"Generating report for: {user.email}")
+            logger.info(f"Generating report for: {user.email}")
             
             shares, mails = ReportService.get_queryset(user, timeline='monthly', search='')
             if not shares.exists() and not mails.exists():
@@ -126,7 +127,7 @@ def auto_generate_report():
                 content_type="text/csv"
             )
             
-            print(f"Report saved for {user.email}: {file_name}")
+            logger.info(f"Report saved for {user.email}: {file_name}")
             
             # Also email the CSV to the user
             from django.conf import settings
@@ -153,10 +154,10 @@ def auto_generate_report():
                 ),
             )
             
-            print(f"Report emailed to {user.email}")
+            logger.info(f"Report emailed to {user.email}")
             
         except Exception as e:
-            print(f"Failed for {user.email}: {e}")
+            logger.error(f"Failed for {user.email}: {e}")
 
 
 @shared_task
@@ -173,7 +174,7 @@ def auto_delete_users():
     for user in deleted_users:
         email = user.email
         user.delete()
-        print(f"Permanently deleted user: {email}")
+        logger.info(f"Permanently deleted user: {email}")
     return f"Permanently deleted {count} users"
 
 
@@ -184,5 +185,22 @@ def auto_clear_old_admin_logs():
     logs = AdminLog.objects.filter(timestamp__lte=threshold_date)
     count = logs.count()
     logs.delete()
-    print(f"Cleared {count} admin logs older than 30 days")
+    logger.info(f"Cleared {count} admin logs older than 30 days")
     return f"Cleared {count} old admin logs"
+
+@shared_task
+def auto_delete_deactivated_users():
+    from django.contrib.auth import get_user_model
+    User = get_user_model()
+
+    threshold_date = timezone.now() - timedelta(days=30)
+    deactivated_users = User.objects.filter(
+        account_status=User.AccountStatus.DEACTIVATED,
+        deactivated_at__lte=threshold_date
+    )
+    count = deactivated_users.count()
+    for user in deactivated_users:
+        email = user.email
+        user.delete()
+        logger.info(f"Permanently deleted deactivated user: {email}")
+    return f"Deleted {count} deactivated users"

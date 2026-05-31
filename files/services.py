@@ -185,7 +185,8 @@ class AuthService:
         User remains is_active=True to allow login for reactivation requests.
         """
         user.account_status = User.AccountStatus.DEACTIVATED
-        user.save()
+        user.deactivated_at = timezone.now()
+        user.save(update_fields=['account_status', 'deactivated_at'])
         
         logger.info(f"Account deactivated for user: {user.email}")
         

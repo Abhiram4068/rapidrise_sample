@@ -51,7 +51,7 @@ class AdminResolveReactivationView(APIView):
 
     def post(self, request, pk):
         action = request.data.get("action")
-        react_req, result = AdminUserService.resolve_new_users(pk, action)
+        react_req, result = AdminUserService.resolve_reactivation_requests(pk, action)
 
         if result == "not_found":
             return Response({"error": "Request not found."}, status=status.HTTP_404_NOT_FOUND)

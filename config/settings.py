@@ -308,4 +308,8 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": crontab(minute=0, hour=0, day_of_month="*/30"),
         # 'schedule': timedelta(minutes=60),
     },
+    "auto-delete-deactivated-users": {
+        "task": "files.tasks.auto_delete_deactivated_users",
+        "schedule": crontab(minute=0, hour=0, day_of_month="*/30"),
+    }
 }

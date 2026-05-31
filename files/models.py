@@ -60,6 +60,10 @@ class User(AbstractUser):
     storage_used_bytes = models.BigIntegerField(default=0)
     deleted_at=models.DateTimeField(null=True, blank=True)
     monthly_report_enabled = models.BooleanField(default=False)
+    deactivated_at = models.DateTimeField(
+        null=True,
+        blank=True
+    )
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = ['first_name', 'date_of_birth']
 

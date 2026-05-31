@@ -14,7 +14,9 @@ from django.utils import timezone
 from datetime import timedelta
 import logging
 logger = logging.getLogger(__name__)
-
+from files.email_template import (
+    send_templated_mail
+)
 
 User = get_user_model()
 
@@ -48,21 +50,27 @@ class AdminUserService:
                 target_user=user,
                 action_details=f"User {user.email} has been unblocked by administrator."
             )
+
             def send_email():
                 try:
-                    send_mail(
-                        subject="Your Account has been UNBLOCKED",
-                            message=( f"Hi {user.first_name},\n\n" "Your HiveDrive account has been reviewed and the suspension has been revoked by the administrator. " "Your account access has now been fully restored.\n\n" "You can log in and continue using the platform normally.\n\n" "Regards,\n" "HiveDrive Administration Team" ),    
+                    send_templated_mail(
+                        subject="Your Account has been Unblocked",
+                        message=(
+                            f"Hi {user.first_name},\n\n"
+                            "Your HiveDrive account has been reviewed and the suspension has been revoked by the administrator.\n"
+                            "Your account access has now been fully restored.\n\n"
+                            "You can log in and continue using the platform normally.\n\n"
+                            "Regards,\n"
+                            "HiveDrive Administration Team"
+                        ),
                         from_email=settings.DEFAULT_FROM_EMAIL,
                         recipient_list=[user.email],
                         fail_silently=False,
                     )
                 except Exception as e:
-                    print(e)
+                    logger.error(f"Failed to send unblock email to {user.email}: {e}")
 
-            
-            thread = threading.Thread(target=send_email)
-            thread.start()
+            threading.Thread(target=send_email).start()
             return user
         except User.DoesNotExist:
             raise NotFound("User not found")
@@ -86,7 +94,7 @@ class AdminUserService:
         allowed_statuses = [
             User.AccountStatus.ACTIVE,
             User.AccountStatus.DEACTIVATED
-            ]
+        ]
         try:
             user = User.objects.get(pk=pk, account_status__in=allowed_statuses)
             user.account_status = User.AccountStatus.BLOCKED
@@ -96,19 +104,26 @@ class AdminUserService:
                 target_user=user,
                 action_details=f"User {user.email} has been blocked by administrator."
             )
+
             def send_email():
                 try:
-                    send_mail(
+                    send_templated_mail(
                         subject="Your Account has been Blocked",
-                        message=f"Hi {user.first_name},\n\nYour account has been Blocked by HiveDrive administrator.\n",
+                        message=(
+                            f"Hi {user.first_name},\n\n"
+                            "Your HiveDrive account has been blocked by the administrator.\n"
+                            "If you believe this was a mistake, please contact support.\n\n"
+                            "Regards,\n"
+                            "HiveDrive Administration Team"
+                        ),
                         from_email=settings.DEFAULT_FROM_EMAIL,
                         recipient_list=[user.email],
                         fail_silently=False,
                     )
                 except Exception as e:
-                    print(e)
-            thread = threading.Thread(target=send_email)
-            thread.start()
+                    logger.error(f"Failed to send block email to {user.email}: {e}")
+
+            threading.Thread(target=send_email).start()
             return user
         except User.DoesNotExist:
             raise NotFound("User not found")
@@ -126,7 +141,7 @@ class AdminUserService:
                 user.account_status = User.AccountStatus.ACTIVE
                 def send_email():
                     try:
-                        send_mail(
+                        send_templated_mail(
                             subject="Your Account Request Has Been Approved",
                             message=(
                                 f"Hi {user.first_name},\n\n"
@@ -181,7 +196,7 @@ class AdminUserService:
             )
             def send_email():
                 try:
-                    send_mail(
+                    send_templated_mail(
                         subject="Your Account has been Deleted",
                         message=f"Hi {user.first_name},\n\nYour account has been Deleted by HiveDrive administrator.\n",
                         from_email=settings.DEFAULT_FROM_EMAIL,
@@ -189,7 +204,7 @@ class AdminUserService:
                         fail_silently=False,
                     )
                 except Exception as e:
-                    print(e)
+                    logger.error(f"Failed to send deletion email to {user.email}: {e}")
             thread = threading.Thread(target=send_email)
             thread.start()
             return user
@@ -213,7 +228,7 @@ class AdminUserService:
             )
             def send_email():
                 try:
-                    send_mail(
+                    send_templated_mail(
                         subject="Your Account has been Restored",
                        message=(
                                 f"Hi {user.first_name},\n\n"
@@ -228,7 +243,7 @@ class AdminUserService:
                         fail_silently=False,
                     )
                 except Exception as e:
-                    print(e)
+                    logger.error(f"Failed to send restore email to {user.email}: {e}")
             thread = threading.Thread(target=send_email)
             thread.start()
             return user
@@ -264,7 +279,7 @@ class AdminUserService:
 
                 def send_approval_email():
                     try:
-                        send_mail(
+                        send_templated_mail(
                             subject="Your Designation Change Request Has Been Approved",
                             message=(
                                 f"Hi {user.first_name},\n\n"
@@ -292,7 +307,7 @@ class AdminUserService:
 
                 def send_rejection_email():
                     try:
-                        send_mail(
+                        send_templated_mail(
                             subject="Your Designation Change Request Has Been Rejected",
                             message=(
                                 f"Hi {user.first_name},\n\n"
@@ -319,7 +334,7 @@ class AdminUserService:
             raise NotFound("Designation change request not found or already resolved.")
 
     @staticmethod
-    def resolve_new_users(pk, action):
+    def resolve_reactivation_requests(pk, action):
         try:
             react_req = ReactivationRequest.objects.select_related("user").get(pk=pk)
         except ReactivationRequest.DoesNotExist:
@@ -330,21 +345,22 @@ class AdminUserService:
             react_req.user.save(update_fields=["account_status"])
             react_req.is_resolved = True
             react_req.save(update_fields=["is_resolved"])
+
             def send_email():
                 try:
-                    send_mail(
+                    send_templated_mail(
                         subject="Your Account Reactivation Request Has Been Approved",
                         message=(
                             f"Hi {react_req.user.first_name},\n\n"
                             "Your account reactivation request has been approved by the administrator.\n"
-                    "Your account is now active and you can log in and continue using the platform.\n\n"
-                    "If you did not request account reactivation, please contact support immediately.\n\n"
-                    "Thank you."
-                ),
-                from_email=settings.DEFAULT_FROM_EMAIL,
-                recipient_list=[react_req.user.email],
-                fail_silently=False,
-                )
+                            "Your account is now active and you can log in and continue using the platform.\n\n"
+                            "If you did not request account reactivation, please contact support immediately.\n\n"
+                            "Thank you."
+                        ),
+                        from_email=settings.DEFAULT_FROM_EMAIL,
+                        recipient_list=[react_req.user.email],
+                        fail_silently=False,
+                    )
                 except Exception as e:
                     logger.error(f"Failed to send reactivation approval email: {e}")
 
@@ -354,9 +370,10 @@ class AdminUserService:
         elif action == "reject":
             react_req.is_resolved = True
             react_req.save(update_fields=["is_resolved"])
+
             def send_email():
                 try:
-                    send_mail(
+                    send_templated_mail(
                         subject="Your Account Reactivation Request Has Been Rejected",
                         message=(
                             f"Hi {react_req.user.first_name},\n\n"
