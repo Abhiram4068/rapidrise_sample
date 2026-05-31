@@ -1,31 +1,96 @@
-from files.serializers import StorageSummarySerializer
-from files.services import StorageService
-from django.conf import settings
-from django.shortcuts import render
-from rest_framework.views import APIView
-from rest_framework.permissions import IsAuthenticated, AllowAny, IsAdminUser
-from rest_framework.response import Response
-from rest_framework import status
-from rest_framework_simplejwt.tokens import RefreshToken
-from rest_framework_simplejwt.exceptions import TokenError
-from django.http import FileResponse
-from django.core.exceptions import ValidationError, PermissionDenied
-from files.serializers import (
-    RegisterSerializer, LoginSerializer, UserProfileSerializer,ChangePasswordSerialzier, DeactivateAccountSerializer, ChunkUploadSerializer, ChunkUploadStatusQuerySerializer, ChunkUploadControlSerializer, FilesListSerializer, FileUpdateSerializer ,FileShareSerializer, FileShareCreateSerializer, PublicFileSerializer,CollectionSerializer, CollectionFileSerializer
-    ,ScheduledMailSerializer, FileShareListSerializer, ReportQuerySerializer, ToggleMonthlyReportSerializer, DesignationSerializer, ResetPasswordSerializer, ForgotPasswordSerializer, UserProfileUpdateSerializer,ReactivationRequestSerializer, DesignationChangeRequestListSerializer, DesignationChangeRequestCreateSerializer, DesignationChangeRequestAdminSerializer
-    )
-from files.models import  ChunkUploadSession
-from files.services import (
-    create_user, authenticate_and_generate_token, AuthenticationError ,AuthService, UserProfileService, FileService, ChunkUploadService, FileShareService, ViewFileShareService, CollectionService, ReportService, AccountService, ThreadService, StageService, NodeService, DependencyService
-    )
-from rest_framework.pagination import PageNumberPagination
-from rest_framework.exceptions import NotFound, ValidationError as DRFValidationError
-from files.exceptions import StorageLimitExceeded
-from django.db.models import F, Sum, Q
-from rest_framework import serializers
-from .permissions import IsActiveAccount
-
 import logging
+from datetime import datetime
+
+from django.conf import settings
+from django.core.exceptions import ValidationError
+from django.db.models import Q, Sum
+from django.http import FileResponse, HttpResponse
+from rest_framework import serializers, status
+from rest_framework.exceptions import NotFound, ValidationError as DRFValidationError
+from rest_framework.pagination import PageNumberPagination
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.views import APIView
+from rest_framework_simplejwt.exceptions import TokenError
+from rest_framework_simplejwt.tokens import RefreshToken
+
+from .exceptions import StorageLimitExceeded
+from .models import (
+    ChunkUploadSession,
+    NodeActivity,
+    NodeDependency,
+    NodeFile,
+    ProjectNode,
+    ProjectStage,
+    ProjectThread,
+)
+from .permissions import IsActiveAccount
+from .serializers import (
+    BulkFileShareSerializer,
+    ChangePasswordSerialzier,
+    ChunkUploadControlSerializer,
+    ChunkUploadSerializer,
+    ChunkUploadStatusQuerySerializer,
+    CollectionFileSerializer,
+    CollectionSerializer,
+    DeactivateAccountSerializer,
+    DependencySerializer,
+    DesignationChangeRequestCreateSerializer,
+    DesignationChangeRequestListSerializer,
+    DesignationSerializer,
+    FileShareCreateSerializer,
+    FileShareListSerializer,
+    FileShareSerializer,
+    FilesListSerializer,
+    FileUpdateSerializer,
+    ForgotPasswordSerializer,
+    GraphEdgeSerializer,
+    GraphNodeSerializer,
+    LoginSerializer,
+    NodeActivitySerializer,
+    NodeCreateSerializer,
+    NodeFileSerializer,
+    NodeFileUploadSerializer,
+    NodeSerializer,
+    NodeUpdateSerializer,
+    ProjectStageSerializer,
+    PublicFileSerializer,
+    ReactivationRequestSerializer,
+    RegisterSerializer,
+    ReportQuerySerializer,
+    ResetPasswordSerializer,
+    ScheduledMailSerializer,
+    ShareBundleSerializer,
+    StorageSummarySerializer,
+    ThreadCreateSerializer,
+    ThreadSerializer,
+    ToggleMonthlyReportSerializer,
+    UserProfileSerializer,
+    UserProfileUpdateSerializer,
+)
+from .services import (
+    AccountService,
+    AuthService,
+    AuthenticationError,
+    ChunkUploadService,
+    CollectionService,
+    DashboardClass,
+    DependencyService,
+    DesignationListService,
+    FileService,
+    FileShareService,
+    NodeService,
+    ReportService,
+    StageService,
+    StorageManagementService,
+    StorageService,
+    ThreadService,
+    UserProfileService,
+    ViewFileShareService,
+    authenticate_and_generate_token,
+    create_user,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -95,7 +160,7 @@ class DesignationListView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
-        from .services import DesignationListService
+
         designations = DesignationListService.get_active_designations()
         serializer = DesignationSerializer(designations, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
@@ -159,7 +224,7 @@ class TokenRefreshCookieView(APIView):
                 User = get_user_model()
                 user = User.objects.get(id=user_id)
                 
-                # ✅ Check account status
+  
                 if hasattr(user, "account_status") and user.account_status in ["blocked", "deleted"]:
                     response = Response(
                         {"detail": f"Access denied. Your account is {user.account_status}."},
@@ -328,9 +393,6 @@ class DesignationChangeRequestView(APIView):
         out = DesignationChangeRequestListSerializer(request_obj)
         return Response(out.data, status=status.HTTP_201_CREATED)
 
-
-import time
-from rest_framework.exceptions import ValidationError
 
 class ChunkUploadView(APIView):
     permission_classes = [IsActiveAccount]
@@ -777,7 +839,6 @@ class BulkUnarchiveFileView(APIView):
         except ValueError as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
-from django.db.models import Q
 class ArchiveFile(APIView):
     """
     view for handling the get method for archived files
@@ -1003,9 +1064,6 @@ class FileShareCreateListUpdateView(APIView):
 
 
 
-from .serializers import BulkFileShareSerializer
-from .services import FileShareService
-from .serializers import ShareBundleSerializer
 
 
 class BulkFileShareView(APIView):
@@ -1230,41 +1288,7 @@ class PublicFileAccessView(APIView):
             file_obj, filename = ViewFileShareService.get_file_response(share)
             
         return FileResponse(file_obj, as_attachment=True, filename=filename)
-
-from django.utils import timezone
-
-class PublicFileVerifyView(APIView):
-    authentication_classes = []
-    permission_classes = []
-
-    def get(self, request, token):
-        serializer = PublicFileSerializer(data={'token': token})
-        if not serializer.is_valid():
-            error_message = next(iter(serializer.errors.values()))[0]
-            
-            status_code = status.HTTP_404_NOT_FOUND
-            if 'expired' in str(error_message).lower():
-                status_code = status.HTTP_410_GONE
-            elif 'revoked' in str(error_message).lower() or 'used' in str(error_message).lower():
-                status_code = status.HTTP_403_FORBIDDEN
-            
-            return Response({'error': str(error_message)}, status=status_code)
-
-        share = serializer.share
-        return Response({
-            'file_name': share.file.original_name,
-            'file_size': share.file.file_size,
-            'content_type': share.file.content_type,
-            'sender': share.owner.get_full_name() or share.owner.email,
-            'expiration': share.expiration_datetime,
-            'permission': share.permission,
-            'accessed': share.accessed,
-            'view_limit': share.view_limit,
-            'view_count': share.view_count,
-            'download_limit': share.download_limit,
-            'download_count': share.download_count,
-        })
-            
+        
 class CollectionListCreateView(APIView):
     permission_classes = [IsActiveAccount]
 
@@ -1401,19 +1425,6 @@ class CollectionFileView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-
-import csv
-from django.http import HttpResponse
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework import status
-from django.core.exceptions import PermissionDenied
-from django.http import StreamingHttpResponse
-from datetime import datetime
-
-
-
-
 class ReportDownloadView(APIView):
     permission_classes = [IsActiveAccount]
     pagination_class = DefaultPageNumberPagination 
@@ -1502,7 +1513,6 @@ class DashboardView(APIView):
     permission_classes = [IsActiveAccount]
 
     def get(self, request):
-        from files.services import DashboardClass
         data = DashboardClass.get_dashboard_data(request.user)
         
         # Serialize active links manually since it's simple
@@ -1543,8 +1553,6 @@ class StorageManagementView(APIView):
     pagination_class = DefaultPageNumberPagination
 
     def get(self, request):
-        from files.services import StorageManagementService
-        
         filter_type = request.query_params.get('filter_type', 'category') # category, duplicates, old
         category = request.query_params.get('category', 'All')
         search = request.query_params.get('search', '')
@@ -1567,8 +1575,6 @@ class StoragePermanentDeleteView(APIView):
     permission_classes = [IsActiveAccount]
 
     def post(self, request):
-        from files.services import StorageManagementService
-        
         file_ids = request.data.get('file_ids', [])
         if not file_ids:
             return Response({"error": "No file_ids provided"}, status=status.HTTP_400_BAD_REQUEST)
@@ -1578,50 +1584,6 @@ class StoragePermanentDeleteView(APIView):
             return Response({"message": f"Successfully deleted {len(file_ids)} files. Freed {total_freed} bytes."}, status=status.HTTP_200_OK)
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-
-
-
-
-
-"""
-views.py — request/response only. All logic delegated to services.
-
-URL structure:
-    /api/threads/                           GET, POST
-    /api/threads/<id>/                      GET, PUT, DELETE
-    /api/threads/<id>/graph/                GET  (ReactFlow payload)
-    /api/threads/<thread_id>/nodes/         GET, POST
-    /api/nodes/<id>/                        GET, PUT, DELETE
-    /api/nodes/<id>/branch/                 POST
-    /api/nodes/<id>/position/               PATCH  (drag on canvas)
-    /api/nodes/<id>/dependencies/           GET, POST
-    /api/dependencies/<id>/                 DELETE
-    /api/nodes/<id>/files/                  GET, POST
-    /api/files/<id>/                        DELETE
-    /api/nodes/<id>/activity/              GET
-"""
-
-from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.response import Response
-from rest_framework.views import APIView
-
-from .models import NodeDependency, NodeFile, ProjectNode, ProjectThread, NodeActivity, ProjectStage
-from .serializers import (
-    DependencySerializer,
-    GraphEdgeSerializer,
-    GraphNodeSerializer,
-    NodeActivitySerializer,
-    NodeCreateSerializer,
-    NodeFileSerializer,
-    NodeFileUploadSerializer,
-    NodeSerializer,
-    NodeUpdateSerializer,
-    ThreadCreateSerializer,
-    ThreadSerializer,
-    ProjectStageSerializer,
-)
-from .services import DependencyService, FileService, NodeService, ThreadService, StageService
 
 
 # ─── Thread ───────────────────────────────────────────────────────────────────
@@ -1728,13 +1690,7 @@ class ThreadStageListCreateView(APIView):
             
         serializer = ProjectStageSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        stage = serializer.save(thread=thread)
-        NodeActivity.objects.create(
-            stage=stage,
-            actor=request.user,
-            event_type=NodeActivity.EventType.CREATED,
-            message=f'Stage "{stage.name}" created.',
-        )
+        stage = StageService.create_stage(thread, serializer.validated_data, request.user)
         data = ProjectStageSerializer(stage).data
         data["detail"] = f'Stage "{stage.name}" created successfully.'
         return Response(data, status=status.HTTP_201_CREATED)
@@ -1920,12 +1876,7 @@ class DependencyListCreateView(APIView):
 
         target_id = serializer.validated_data["target_node"].id
         try:
-            target = ProjectNode.objects.get(pk=target_id, thread=source.thread, is_deleted=False)
-        except ProjectNode.DoesNotExist:
-            return Response({"detail": "Target node not found or belongs to a different thread."}, status=status.HTTP_404_NOT_FOUND)
-
-        try:
-            source.refresh_from_db()
+            target = DependencyService.get_target_node(target_id, source.thread)
             dep = DependencyService.add_dependency(
                 source, target,
                 serializer.validated_data.get("dependency_type", NodeDependency.DependencyType.DEPENDS_ON),

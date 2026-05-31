@@ -727,9 +727,11 @@ class FileShareListSerializer(serializers.ModelSerializer):
         return obj.file.id if obj.file else None
 
     def get_file_name(self, obj):
+        if getattr(obj, 'bundle_id', None) and obj.bundle:
+            return obj.bundle.title or 'Bulk Share Package'
         if obj.file:
             return obj.file.original_name
-        return obj.bundle.title or "Bulk Share Package"
+        return 'Shared file'
 
     def get_file_size(self, obj):
         if obj.file:
@@ -967,9 +969,11 @@ class ScheduledMailSerializer(serializers.ModelSerializer):
     def get_share(self, obj):
         if obj.share.accessed:
             return "Accessed"
+        if obj.status == ScheduledMail.Status.REVOKED:
+            return "Revoked"
         if obj.share.is_active:
             return "Active"
-        return "Revoked"
+        return ScheduledMail.Status.PENDING
     def get_accessed_at(self, obj):
         return obj.share.accessed_at
 

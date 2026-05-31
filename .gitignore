@@ -43,3 +43,6 @@ celerybeat-schedule
 temp_uploads/
 uploads
 share_bundles/
+
+
+celerybeat-schedule*

@@ -1558,24 +1558,22 @@ class FileShareService:
         ]
         ShareBundleItem.objects.bulk_create(bundle_items)
 
-        # ---------------------------------
-        # BULK INSERT RECIPIENTS (Unify with FileShareLink)
-        # ---------------------------------
+        # One share link per recipient (whole package), not one per file.
+        primary_file = files.first()
         from .models import FileShareLink
         FileShareLink.objects.bulk_create([
             FileShareLink(
                 bundle=bundle,
-                file=item.file, 
+                file=primary_file,
                 owner=owner,
                 recipient_email=email.lower(),
                 share_token=FileShareService.generate_share_token(),
                 expiration_datetime=expiration_datetime,
                 permission=permission,
                 download_limit=download_limit,
-                view_limit=view_limit
+                view_limit=view_limit,
             )
             for email in recipient_emails
-            for item in bundle_items 
         ])
 
         # ---------------------------------
@@ -1681,12 +1679,23 @@ class FileShareService:
     @staticmethod
     def revoke_share(file_share_id, owner):
         try:
-            file_share=FileShareLink.objects.get(id=file_share_id, owner=owner, accessed=False)
+            file_share = FileShareLink.objects.get(id=file_share_id, owner=owner, accessed=False)
         except FileShareLink.DoesNotExist:
             raise ValueError("You haven't made this share or you don't have the permission")
-        file_share.revoked_at=timezone.now()
-        file_share.is_active=False
-        file_share.save(update_fields=["revoked_at", "is_active"])
+
+        now = timezone.now()
+        if file_share.bundle_id:
+            bundle = file_share.bundle
+            FileShareLink.objects.filter(bundle=bundle, owner=owner).update(
+                revoked_at=now,
+                is_active=False,
+            )
+            bundle.is_active = False
+            bundle.save(update_fields=['is_active'])
+        else:
+            file_share.revoked_at = now
+            file_share.is_active = False
+            file_share.save(update_fields=['revoked_at', 'is_active'])
         return True
 
     @staticmethod
@@ -1770,6 +1779,35 @@ class ViewFileShareService:
         ).exists():
             return 'scheduled'
         return 'standard'
+
+    @staticmethod
+    def _get_bundle_from_share(share):
+        from .models import ShareBundle
+
+        if isinstance(share, ShareBundle):
+            return share
+        if getattr(share, 'bundle_id', None):
+            return share.bundle
+        return None
+
+    @staticmethod
+    def _mark_bundle_package_accessed(bundle, accessed_at=None, mark_download=False):
+        """When a bundle link is used, mark every share link in the package as accessed."""
+        from .models import FileShareLink
+
+        if bundle is None:
+            return
+
+        now = accessed_at or timezone.now()
+        link_updates = {'accessed': True, 'accessed_at': now}
+        if mark_download:
+            link_updates['download_count'] = bundle.download_count or 0
+
+        FileShareLink.objects.filter(bundle=bundle).update(**link_updates)
+
+        if bundle.accessed_at is None:
+            bundle.accessed_at = now
+            bundle.save(update_fields=['accessed_at'])
 
     @staticmethod
     def build_public_metadata(share):
@@ -1929,14 +1967,20 @@ class ViewFileShareService:
                 bundle.save(update_fields=['view_count'])
 
         elif action == 'download':
-            share.download_count = (share.download_count or 0) + 1
-            fields_to_save = ['download_count']
-            share.save(update_fields=fields_to_save)
+            from .models import ShareBundle
 
-            if hasattr(share, 'bundle') and share.bundle:
-                bundle = share.bundle
-                bundle.download_count = (bundle.download_count or 0) + 1
-                bundle.save(update_fields=['download_count'])
+            share.download_count = (share.download_count or 0) + 1
+            share.save(update_fields=['download_count'])
+
+            bundle = ViewFileShareService._get_bundle_from_share(share)
+            if bundle is not None:
+                if not isinstance(share, ShareBundle) and getattr(share, 'bundle_id', None):
+                    bundle.download_count = (bundle.download_count or 0) + 1
+                    bundle.save(update_fields=['download_count'])
+                ViewFileShareService._mark_bundle_package_accessed(
+                    bundle,
+                    mark_download=True,
+                )
 
         # ── Deactivation check (runs after either action) ──────────────────────
         if not ViewFileShareService.enforces_access_limits(share):
@@ -2001,10 +2045,22 @@ class ViewFileShareService:
         from .models import ShareBundle
 
         now = timezone.now()
-        if isinstance(share, ShareBundle):
-            if share.accessed_at is None:
+        bundle = ViewFileShareService._get_bundle_from_share(share)
+
+        if bundle is not None:
+            if isinstance(share, ShareBundle):
+                if share.accessed_at is None:
+                    share.accessed_at = now
+                    share.save(update_fields=['accessed_at'])
+            elif share.accessed_at is None:
                 share.accessed_at = now
-                share.save(update_fields=['accessed_at'])
+                update_fields = ['accessed_at']
+                if share.permission != 'one_time_download':
+                    share.accessed = True
+                    update_fields.append('accessed')
+                share.save(update_fields=update_fields)
+
+            ViewFileShareService._mark_bundle_package_accessed(bundle, accessed_at=now)
             return share
 
         if share.accessed_at is None:
@@ -2620,6 +2676,26 @@ class ThreadService:
 class StageService:
 
     @staticmethod
+    def create_stage(thread, validated_data: dict, user) -> ProjectStage:
+        stage = ProjectStage.objects.create(
+            thread=thread,
+            name=validated_data["name"],
+        )
+        root = (
+            ProjectNode.objects.filter(thread=thread, is_deleted=False)
+            .order_by("created_at", "id")
+            .first()
+        )
+        if root:
+            NodeActivity.objects.create(
+                node=root,
+                actor=user,
+                event_type=NodeActivity.EventType.CREATED,
+                message=f'Stage "{stage.name}" created.',
+            )
+        return stage
+
+    @staticmethod
     def delete_stage(stage: ProjectStage, user) -> str:
         """Delete a stage if it has no active nodes. Returns the stage name."""
         node_count = ProjectNode.objects.filter(stage=stage, is_deleted=False).count()
@@ -2782,6 +2858,19 @@ class NodeService:
  
 class DependencyService:
     @staticmethod
+    def get_target_node(target_id, thread) -> ProjectNode:
+        try:
+            return ProjectNode.objects.get(
+                pk=target_id,
+                thread=thread,
+                is_deleted=False,
+            )
+        except ProjectNode.DoesNotExist:
+            raise DRFValidationError(
+                {"detail": "Target node not found or belongs to a different thread."}
+            )
+
+    @staticmethod
     def _restore_downstream(source_node: ProjectNode, user):
 
         queue = [source_node.id]
@@ -2840,6 +2929,7 @@ class DependencyService:
  
     @staticmethod
     def add_dependency(source: ProjectNode, target: ProjectNode, dependency_type: str, user) -> NodeDependency:
+        source.refresh_from_db()
         if source.id == target.id:
             raise DRFValidationError("A node cannot depend on itself.")
 
