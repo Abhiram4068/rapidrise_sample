@@ -1619,7 +1619,8 @@ class FileShareService:
         designation = get_sender_designation(owner)
         email_subject = f"{sender_name} shared '{share.file.original_name}' with you"
         share_url = f"{settings.FRONTEND_BASE_URL}/files/public/{share.share_token}/"
-        expires_on = share.expiration_datetime.strftime('%B %d, %Y at %I:%M %p')
+        expiry_ist = share.expiration_datetime + timedelta(hours=5, minutes=30)
+        expires_on = expiry_ist.strftime('%B %d, %Y at %I:%M %p')
         file_size_mb = share.file.file_size / (1024 * 1024)
 
         plain_body = (

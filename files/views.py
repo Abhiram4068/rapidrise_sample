@@ -326,7 +326,6 @@ class DeactivateAccountView(APIView):
     serializer_class = DeactivateAccountSerializer
 
     def post(self, request):
-        print(request.data)
         serializer = self.serializer_class(
             data=request.data,
             context={'request': request}
@@ -692,7 +691,6 @@ class FileUpdateView(APIView):
         )
         
         serializer.is_valid(raise_exception=True)
-        print(serializer.validated_data)
         file_obj = FileService.get_file_detail(
             user=request.user,
             file_id=pk

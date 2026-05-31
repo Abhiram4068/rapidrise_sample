@@ -27,22 +27,18 @@ load_dotenv(BASE_DIR / ".env")
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-nci8&el^8m4l!d+!5#+hpq9#%orv79^t-+6-ppx_qy@o+dy3n_'
+
+SECRET_KEY = os.getenv("SECRET_KEY")
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
-
-ALLOWED_HOSTS = []
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5173",
-]
+DEBUG = os.getenv("DEBUG", "False") == "True"
+ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "").split(",")
+CORS_ALLOWED_ORIGINS = os.getenv("CORS_ALLOWED_ORIGINS", "").split(",")
 CORS_ALLOW_CREDENTIALS = True
 SESSION_COOKIE_SAMESITE = "Lax"   # or "None" if cross-site
 SESSION_COOKIE_SECURE = False     # True in production (HTTPS)
 CSRF_COOKIE_SECURE = False
-CSRF_TRUSTED_ORIGINS = [
-    "http://localhost:5173",
-]
+CSRF_TRUSTED_ORIGINS = os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",")
 
 
 # Application definition
@@ -139,7 +135,6 @@ AUTH_PASSWORD_VALIDATORS = [
 LANGUAGE_CODE = 'en-us'
 TIME_ZONE='Asia/Kolkata'
 USE_TZ = True
-TIME_ZONE = "Asia/Kolkata"
 
 USE_I18N = True
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
@@ -300,8 +295,8 @@ CELERY_BEAT_SCHEDULE = {
     },
     "auto-delete-users": {
         "task": "files.tasks.auto_delete_users",
-        #"schedule": crontab(minute=0, hour=0, day_of_month="*/30"),  # runs monthly at midnight
-        "schedule": crontab(minute="*"),
+        "schedule": crontab(minute=0, hour=0, day_of_month="*/30"),  # runs monthly at midnight
+        # "schedule": crontab(minute="*"),
     },
     'auto-clear-old-admin-logs': {
         'task': 'files.tasks.auto_clear_old_admin_logs',
