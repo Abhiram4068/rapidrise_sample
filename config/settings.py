@@ -91,16 +91,7 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
-# DATABASES = {
-#     'default': {
-#         'ENGINE': 'django.db.backends.mysql',
-#         'NAME': 'fileshare_db',
-#         'HOST':'localhost',
-#         'PASSWORD':'12345678',
-#         'USER':'root',
-#         'PORT':'3306'
-#     }
-# }
+
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
@@ -128,6 +119,8 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
+
+PASSWORD_RESET_TIMEOUT = int(os.getenv("PASSWORD_RESET_TIMEOUT", 300))
 
 # Internationalization
 # https://docs.djangoproject.com/en/6.0/topics/i18n/

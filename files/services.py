@@ -146,7 +146,7 @@ class AuthService:
                     message=(
                         f"Hi {user.first_name or user.email},\n\n"
                         f"Click the link below to reset your password. "
-                        f"This link expires in 24 hours.\n\n"
+                        f"This link expires in 5 minutes.\n\n"
                         f"{reset_url}\n\n"
                         f"If you didn't request this, ignore this email."
                     ),

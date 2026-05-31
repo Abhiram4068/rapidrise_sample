@@ -73,7 +73,10 @@ class ForgotPasswordSerializer(serializers.Serializer):
     email = serializers.EmailField()
 
     def validate_email(self, value):
-        return value.lower().strip()
+        email = value.lower().strip()
+        if not User.objects.filter(email=email).exists():
+            raise serializers.ValidationError("Email does not exist.")
+        return email
     
 class ResetPasswordSerializer(serializers.Serializer):
     uid          = serializers.CharField()
@@ -86,6 +89,19 @@ class ResetPasswordSerializer(serializers.Serializer):
             raise serializers.ValidationError({"confirm_password": "Passwords do not match."})
         
         validate_password(data["new_password"])
+
+        uid = data.get("uid")
+        if uid:
+            from django.utils.http import urlsafe_base64_decode
+            from django.utils.encoding import force_str
+            try:
+                user_id = force_str(urlsafe_base64_decode(uid))
+                user = User.objects.get(pk=user_id)
+                if user.check_password(data["new_password"]):
+                    raise serializers.ValidationError({"new_password": "New password cannot be the same as your current password."})
+            except (User.DoesNotExist, ValueError, TypeError):
+                pass
+
         return data
 
 
