@@ -14,18 +14,16 @@ from files.serializers import (
     RegisterSerializer, LoginSerializer, UserProfileSerializer,ChangePasswordSerialzier, DeactivateAccountSerializer, ChunkUploadSerializer, ChunkUploadStatusQuerySerializer, ChunkUploadControlSerializer, FilesListSerializer, FileUpdateSerializer ,FileShareSerializer, FileShareCreateSerializer, PublicFileSerializer,CollectionSerializer, CollectionFileSerializer
     ,ScheduledMailSerializer, FileShareListSerializer, ReportQuerySerializer, ToggleMonthlyReportSerializer, DesignationSerializer, ResetPasswordSerializer, ForgotPasswordSerializer, UserProfileUpdateSerializer,ReactivationRequestSerializer, DesignationChangeRequestListSerializer, DesignationChangeRequestCreateSerializer, DesignationChangeRequestAdminSerializer
     )
-from files.models import ReactivationRequest, ShareBundle, ChunkUploadSession
+from files.models import  ChunkUploadSession
 from files.services import (
     create_user, authenticate_and_generate_token, AuthenticationError ,AuthService, UserProfileService, FileService, ChunkUploadService, FileShareService, ViewFileShareService, CollectionService, ReportService, AccountService, ThreadService, StageService, NodeService, DependencyService
     )
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.exceptions import NotFound, ValidationError as DRFValidationError
-from files.authentication import CookieJWTAuthentication
 from files.exceptions import StorageLimitExceeded
 from django.db.models import F, Sum, Q
 from rest_framework import serializers
 from .permissions import IsActiveAccount
-from .email_template import get_email_template
 
 import logging
 logger = logging.getLogger(__name__)
@@ -282,31 +280,6 @@ class DeactivateAccountView(APIView):
 class ReactivationRequestView(APIView):
     permission_classes = [IsAuthenticated]
     serializer_class = ReactivationRequestSerializer
-
-    def get(self, request):
-        # Admin can search through all requests, regular users see their own
-        if request.user.is_staff or request.user.is_superuser:
-            queryset = ReactivationRequest.objects.all().order_by('-created_at')
-            search = request.query_params.get('search', '').strip()
-            if search:
-                queryset = queryset.filter(
-                    Q(user__email__icontains=search) |
-                    Q(user__first_name__icontains=search) |
-                    Q(user__last_name__icontains=search) |
-                    Q(reason__icontains=search)
-                )
-        else:
-            queryset = ReactivationRequest.objects.filter(user=request.user).order_by('-created_at')
-
-        paginator = DefaultPageNumberPagination()
-        page = paginator.paginate_queryset(queryset, request, view=self)
-        
-        if page is not None:
-            serializer = self.serializer_class(page, many=True, context={'request': request})
-            return paginator.get_paginated_response(serializer.data)
-
-        serializer = self.serializer_class(queryset, many=True, context={'request': request})
-        return Response(serializer.data)
 
     def post(self, request):
         serializer = self.serializer_class(data=request.data)

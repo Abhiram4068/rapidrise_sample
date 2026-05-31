@@ -4,15 +4,11 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, permissions
 from django.contrib.auth import get_user_model
-from files.models import File, ReactivationRequest
-from files.serializers import ReactivationRequestSerializer, UserProfileSerializer
-from django.db.models import Count, Sum
-from .serializers import AdminUserListSerializer, DesignationChangeRequestSerializer, DesignationSerializer, AdminLogSerializer
-from .services import AdminUserService, DesignationService
-from .models import AdminLog
+from files.serializers import ReactivationRequestSerializer
+from .serializers import (AdminUserListSerializer, DesignationChangeRequestSerializer, DesignationSerializer, AdminLogSerializer)
+from .services import (AdminUserService, DesignationService, AdminDashboardService)
 from rest_framework.pagination import PageNumberPagination
 from django.db import models
-from django.db.models import Q
 
 class StandardResultsPagination(PageNumberPagination):
     page_size = 12
@@ -29,32 +25,20 @@ class AdminDashboardStatsView(APIView):
     permission_classes = [IsAdminUser]
 
     def get(self, request):
-        from .services import AdminDashboardService
         stats = AdminDashboardService.get_stats()
         return Response(stats)
 
 class AdminReactivationRequestListView(APIView):
     permission_classes = [IsAdminUser]
     serializer_class = ReactivationRequestSerializer
+
     def get(self, request):
-        # Admin can search through all requests, regular users see their own
-        if request.user.is_staff or request.user.is_superuser:
-            queryset = ReactivationRequest.objects.filter(is_resolved=False).order_by('-created_at')
-            search = request.query_params.get('search', '').strip()
-            if search:
-                queryset = queryset.filter(
-                    Q(user__email__icontains=search) |
-                    Q(user__first_name__icontains=search) |
-                    Q(user__last_name__icontains=search) |
-                    Q(user__account_status__icontains=search) |
-                    Q(reason__icontains=search)
-                )
-        else:
-            queryset = ReactivationRequest.objects.filter(user=request.user).order_by('-created_at')
+        search = request.query_params.get('search', '').strip()
+        queryset = AdminUserService.get_reactivation_requests(search=search)
 
         paginator = StandardResultsPagination()
         page = paginator.paginate_queryset(queryset, request, view=self)
-        
+
         if page is not None:
             serializer = self.serializer_class(page, many=True, context={'request': request})
             return paginator.get_paginated_response(serializer.data)
@@ -309,18 +293,8 @@ class AdminLogListView(APIView):
     permission_classes = [IsAdminUser]
 
     def get(self, request):
-        queryset = AdminLog.objects.all().select_related(
-            'admin', 'target_user').order_by('-timestamp')
-
         search = request.query_params.get('search', '').strip()
-        if search:
-            queryset = queryset.filter(
-                Q(target_user__email__icontains=search) |
-                Q(target_user__first_name__icontains=search) |
-                Q(target_user__last_name__icontains=search) |
-                Q(activity_type__icontains=search) |
-                Q(action_details__icontains=search)
-            )
+        queryset = AdminUserService.get_admin_logs(search=search)
 
         paginator = StandardResultsPagination()
         page = paginator.paginate_queryset(queryset, request)
