@@ -8,9 +8,14 @@ from administration.models import Designation
 import logging
 logger = logging.getLogger(__name__)
 
+import re
+from datetime import date
+from django.utils import timezone
+
+
 class RegisterSerializer(serializers.ModelSerializer):
-    confirm_password=serializers.CharField(write_only=True, min_length=8)
-    date_of_birth = serializers.DateField(required=False, allow_null=True)
+    confirm_password = serializers.CharField(write_only=True, min_length=8, max_length=128)
+    date_of_birth = serializers.DateField(required=True)
     email = serializers.EmailField()
     designation = serializers.PrimaryKeyRelatedField(
         queryset=Designation.objects.all(),
@@ -18,8 +23,8 @@ class RegisterSerializer(serializers.ModelSerializer):
     )
 
     class Meta:
-        model=User
-        fields=[
+        model = User
+        fields = [
             'email',
             'first_name',
             'last_name',
@@ -28,14 +33,27 @@ class RegisterSerializer(serializers.ModelSerializer):
             'password',
             'confirm_password'
         ]
-        extra_kwargs={
-            'password':{'write_only':True, 'min_length':8},
-            'last_name':{'required':False, 'allow_blank':True},
-            'date_of_birth':{'required':False}
+        extra_kwargs = {
+            'password': {'write_only': True, 'min_length': 8, 'max_length': 128},
+            'first_name': {'required': True},
+            'last_name': {'required': False, 'allow_blank': True},
         }
+
     def validate_email(self, value):
-        email=value.lower().strip()
-        existing_user=User.objects.filter(email=email).first()
+        email = value.lower().strip()
+
+        if len(email) > 254:
+            raise serializers.ValidationError("Email address must not exceed 254 characters.")
+
+        email_regex = r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[A-Za-z]{2,}$'
+        if not re.match(email_regex, email):
+            raise serializers.ValidationError("Please enter a valid email address.")
+
+        local_part = email.split("@")[0]
+        if re.search(r'\.{2,}', local_part):
+            raise serializers.ValidationError("Please enter a valid email address.")
+
+        existing_user = User.objects.filter(email=email).first()
         if existing_user:
             if existing_user.account_status == User.AccountStatus.WAITING_FOR_APPROVAL:
                 raise serializers.ValidationError("Your account is waiting for approval.")
@@ -45,18 +63,46 @@ class RegisterSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError("Your account has been deleted by the administrator. Access to this platform has been permanently restricted until reviewed by the admin team. Only an administrator can revoke this restriction and restore account access.")
             else:
                 raise serializers.ValidationError("Email already exists")
+        return email
+
+    def validate_date_of_birth(self, value):
+        today = date.today()
+
+        if value > today:
+            raise serializers.ValidationError("Date of birth cannot be a future date.")
+
+        age = today.year - value.year - ((today.month, today.day) < (value.month, value.day))
+
+        if age < 18:
+            raise serializers.ValidationError("You must be at least 18 years old to register.")
+        if age > 80:
+            raise serializers.ValidationError("Please enter a valid date of birth.")
+
         return value
+
     def validate(self, attrs):
-        password=attrs.get('password')
-        confirm_password=attrs.get('confirm_password')
-        if password!=confirm_password:
-            raise serializers.ValidationError(
-                {'confirm_password':'Passwords do not match'}
-            )
+        password = attrs.get('password')
+        confirm_password = attrs.get('confirm_password')
+
+        if len(password) < 8:
+            raise serializers.ValidationError({"password": "Password must contain at least 8 characters."})
+        if len(password) > 128:
+            raise serializers.ValidationError({"password": "Password must not exceed 128 characters."})
+
+        strong_password_regex = r'^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&]).{8,}$'
+        if not re.match(strong_password_regex, password):
+            raise serializers.ValidationError({
+                "password": "Password must include uppercase, lowercase, number, and special character."
+            })
+
+        if password != confirm_password:
+            raise serializers.ValidationError({"confirm_password": "Passwords do not match."})
+
         validate_password(password)
+
         attrs.pop('confirm_password')
         return attrs
-    
+
 class LoginSerializer(serializers.Serializer):
     email=serializers.EmailField(required=True)
     password=serializers.CharField(
@@ -81,15 +127,25 @@ class ForgotPasswordSerializer(serializers.Serializer):
 class ResetPasswordSerializer(serializers.Serializer):
     uid          = serializers.CharField()
     token        = serializers.CharField()
-    new_password = serializers.CharField(min_length=8, write_only=True)
+    new_password = serializers.CharField(min_length=8, max_length=128, write_only=True)
     confirm_password = serializers.CharField(write_only=True)
 
     def validate(self, data):
-        if data["new_password"] != data["confirm_password"]:
+        new_password = data["new_password"]
+        confirm_password = data["confirm_password"]
+        if len(new_password) < 8:
+            raise serializers.ValidationError({"new_password": "Password must contain at least 8 characters."})
+        if len(new_password) > 128:
+            raise serializers.ValidationError({"new_password": "Password must not exceed 128 characters."})
+        import re
+        strong_password_regex = r'^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&]).{8,}$'
+        if not re.match(strong_password_regex, new_password):
+            raise serializers.ValidationError({
+                "new_password": "Password must include uppercase, lowercase, number, and special character."
+            })
+        if new_password != confirm_password:
             raise serializers.ValidationError({"confirm_password": "Passwords do not match."})
-        
-        validate_password(data["new_password"])
-
+        validate_password(new_password)
         uid = data.get("uid")
         if uid:
             from django.utils.http import urlsafe_base64_decode
@@ -97,8 +153,10 @@ class ResetPasswordSerializer(serializers.Serializer):
             try:
                 user_id = force_str(urlsafe_base64_decode(uid))
                 user = User.objects.get(pk=user_id)
-                if user.check_password(data["new_password"]):
-                    raise serializers.ValidationError({"new_password": "New password cannot be the same as your current password."})
+                if user.check_password(new_password):
+                    raise serializers.ValidationError({
+                        "new_password": "New password cannot be the same as your current password."
+                    })
             except (User.DoesNotExist, ValueError, TypeError):
                 pass
 
@@ -141,7 +199,13 @@ class UserProfileUpdateSerializer(serializers.Serializer):
     date_of_birth = serializers.DateField(required=False)
 
     def validate_first_name(self, value):
+        
+        if not value or not value.strip():
+            raise serializers.ValidationError("First name is required.")
         value = value.strip()
+        if value != value.replace(' ', '') and not value.replace(' ', ''):
+            raise serializers.ValidationError("First name cannot be only spaces.")
+            
         if len(value) < 2:
             raise serializers.ValidationError("First name must contain at least 2 characters.")
         if len(value) > 50:
@@ -153,7 +217,11 @@ class UserProfileUpdateSerializer(serializers.Serializer):
         return value
 
     def validate_last_name(self, value):
+        if not value or not value.strip():
+            raise serializers.ValidationError("Last name is required.")
         value = value.strip()
+        if value != value.replace(' ', '') and not value.replace(' ', ''):
+            raise serializers.ValidationError("Last name cannot be only spaces.")
         if len(value) < 1:
             raise serializers.ValidationError("Last name must contain at least 1 character.")
         if len(value) > 50:
@@ -186,14 +254,28 @@ class ChangePasswordSerialzier(serializers.Serializer):
             raise serializers.ValidationError("Incorrect current password. Please try again.")
         return value
     def validate(self, data):
-        if data["new_password"]!=data["confirm_password"]:
-            raise serializers.ValidationError({"confirm_password":"Passwords doesnt match"})
+            new_password = data["new_password"]
+            confirm_password = data["confirm_password"]
 
-        validate_password(data["new_password"], self.context["request"].user)
+            if len(new_password) < 8:
+                raise serializers.ValidationError({"new_password": "Password must contain at least 8 characters."})
+            if len(new_password) > 128:
+                raise serializers.ValidationError({"new_password": "Password must not exceed 128 characters."})
 
-        if (self.context["request"].user.check_password(data["new_password"])):
-            raise serializers.ValidationError({"new_password": "New password cannot be same as old password"})
-        return data
+            strong_password_regex = r'^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&]).{8,}$'
+            if not re.match(strong_password_regex, new_password):
+                raise serializers.ValidationError({
+                    "new_password": "Password must include uppercase, lowercase, number, and special character."
+                })
+
+            if new_password != confirm_password:
+                raise serializers.ValidationError({"confirm_password": "Passwords do not match."})
+
+            validate_password(new_password, self.context["request"].user)
+            if self.context["request"].user.check_password(new_password):
+                raise serializers.ValidationError({"new_password": "New password cannot be the same as current password."})
+
+            return data
 class DesignationChangeRequestAdminSerializer(serializers.ModelSerializer):
     """
     Used by admins to list all requests and resolve (approve / reject) them.

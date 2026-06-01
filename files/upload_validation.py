@@ -33,8 +33,7 @@ ALLOWED_EXTENSIONS = frozenset({
 })
 
 MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024  # 100 MB per file
-#MAX_STORAGE_BYTES = 1 * 1024 * 1024 * 1024  # 1 GB per user
-MAX_STORAGE_BYTES = 10 * 1024 * 1024  # 10 MB per user
+MAX_STORAGE_BYTES = 1 * 1024 * 1024 * 1024  # 1 GB per user
 MAX_CHUNK_BYTES = 10 * 1024 * 1024  # 10 MB per chunk (match frontend CHUNK_SIZE)
 
 

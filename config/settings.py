@@ -202,11 +202,6 @@ LOGGING = {
             "filename": LOGS_DIR / "files.log",
             "formatter": "standard",
         },
-        "collections_file": {
-            "class": "logging.FileHandler",
-            "filename": LOGS_DIR / "collections.log",
-            "formatter": "standard",
-        },
         "users_file": {
             "class": "logging.FileHandler",
             "filename": LOGS_DIR / "users.log",
@@ -227,11 +222,6 @@ LOGGING = {
         },
         "files": {
             "handlers": ["files_file"],
-            "level": "INFO",
-            "propagate": False,
-        },
-        "collections": {
-            "handlers": ["collections_file"],
             "level": "INFO",
             "propagate": False,
         },

@@ -92,6 +92,7 @@ from .services import (
 )
 
 logger = logging.getLogger(__name__)
+users_logger = logging.getLogger("users")
 
 
 
@@ -139,9 +140,11 @@ class RegisterView(APIView):
         serializer=RegisterSerializer(data=request.data)
         
         serializer.is_valid(raise_exception=True)
+        email = serializer.validated_data.get('email')
         try:
             create_user(serializer.validated_data)
         except ValueError as e:
+            users_logger.warning(f"Registration failed | email={email} | error={str(e)}")
             if "Email already exists" in str(e):
                 return Response(
                     {'email':str(e)},
@@ -151,6 +154,7 @@ class RegisterView(APIView):
                 {'error':str(e)},
                 status=status.HTTP_400_BAD_REQUEST
             )
+        users_logger.info(f"User registered successfully | email={email}")
         return Response(
             {'message':'User Registered successfully!!!'},
             status=status.HTTP_201_CREATED
@@ -172,12 +176,14 @@ class LoginView(APIView):
         serializer=LoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         
+        email = serializer.validated_data.get('email')
         try:
             result=authenticate_and_generate_token(
-                email=serializer.validated_data['email'],
+                email=email,
                 password=serializer.validated_data['password']
             )
         except AuthenticationError as e:
+            users_logger.warning(f"Login failed | email={email} | error={str(e)}")
             return Response(
                 {'error':str(e)},
                 status=status.HTTP_400_BAD_REQUEST
@@ -189,6 +195,7 @@ class LoginView(APIView):
             "user": UserProfileSerializer(user).data,
             "account_status": user.account_status
         }
+        users_logger.info(f"Login successful | email={user.email} | user_id={user.id}")
         response = Response(response_data, status=status.HTTP_200_OK)
         _set_auth_cookies(response, tokens["access"], tokens["refresh"])
 
@@ -249,6 +256,18 @@ class LogoutView(APIView):
     authentication_classes = []
 
     def post(self, request):
+        user_email = None
+        try:
+            from files.authentication import CookieJWTAuthentication
+            auth_res = CookieJWTAuthentication().authenticate(request)
+            if auth_res is not None:
+                user, _ = auth_res
+                user_email = user.email
+        except Exception:
+            pass
+
+        if user_email:
+            users_logger.info(f"Logout successful | email={user_email}")
         response = Response({"message": "Logged out"}, status=status.HTTP_200_OK)
         _clear_auth_cookies(response)
         return response
@@ -261,8 +280,10 @@ class ForgotPasswordView(APIView):
         serializer = ForgotPasswordSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
+        email = serializer.validated_data["email"]
         # Always return 200 — never reveal if the email exists
-        data=AuthService.request_password_reset(serializer.validated_data["email"])
+        data=AuthService.request_password_reset(email)
+        users_logger.info(f"Password reset requested | email={email}")
         return Response(data)
 
 class ResetPasswordView(APIView):
@@ -273,15 +294,30 @@ class ResetPasswordView(APIView):
         serializer = ResetPasswordSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
+        uid = serializer.validated_data["uid"]
         try:
             AuthService.confirm_password_reset(
-                uid          = serializer.validated_data["uid"],
+                uid          = uid,
                 token        = serializer.validated_data["token"],
                 new_password = serializer.validated_data["new_password"],
             )
         except ValueError as e:
+            users_logger.warning(f"Password reset confirmation failed | error={str(e)}")
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
+        user_email = "Unknown User"
+        try:
+            from django.utils.http import urlsafe_base64_decode
+            from django.utils.encoding import force_str
+            from django.contrib.auth import get_user_model
+            user_id = force_str(urlsafe_base64_decode(uid))
+            User = get_user_model()
+            user = User.objects.get(pk=user_id)
+            user_email = user.email
+        except Exception:
+            pass
+
+        users_logger.info(f"Password reset successful | email={user_email}")
         return Response(
             {"detail": "Password reset successful. You can now log in."},
             status=status.HTTP_200_OK,
@@ -332,7 +368,9 @@ class DeactivateAccountView(APIView):
         )
         serializer.is_valid(raise_exception=True)
         
-        AuthService.deactivate_account(user=request.user)
+        user = request.user
+        AuthService.deactivate_account(user=user)
+        users_logger.info(f"Account deactivated successfully | email={user.email} | user_id={user.id}")
         
         response = Response(
             {"message": "Account deactivated successfully. You can request reactivation later if needed."},
@@ -349,10 +387,13 @@ class ReactivationRequestView(APIView):
         serializer = self.serializer_class(data=request.data)
         serializer.is_valid(raise_exception=True)
         
+        user = request.user
+        reason = serializer.validated_data['reason']
         AccountService.submit_reactivation_request(
-            user=request.user,
-            reason=serializer.validated_data['reason']
+            user=user,
+            reason=reason
         )
+        users_logger.info(f"Reactivation request submitted | email={user.email} | user_id={user.id} | reason={reason}")
         
         return Response(
             {"message": "Reactivation request submitted successfully. The admin will review it soon."},
