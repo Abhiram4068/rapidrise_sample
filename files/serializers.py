@@ -669,6 +669,16 @@ class CollectionSerializer(serializers.ModelSerializer):
 
     def get_total_size(self, obj):
         return getattr(obj, 'total_size', 0) or 0
+    def validate_name(self, value):
+        if not value or not value.strip():
+            raise serializers.ValidationError("Collection name cannot be empty.")
+        user = self.context['request'].user
+        qs = Collection.objects.filter(user=user, name__iexact=value.strip())
+        if self.instance:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError("You already have a collection with this name.")
+        return value.strip()
 
 
 class CollectionFileSerializer(serializers.ModelSerializer):

@@ -54,7 +54,7 @@ def auto_clear_trash():
     """
     celery task to clear trash after 30 days
     """    
-    threshold_date = timezone.now() - timedelta(minutes=2)
+    threshold_date = timezone.now() - timedelta(days=30)
     trashed_files = File.objects.filter(
         is_deleted=True,
         deleted_at__lte=threshold_date
@@ -68,7 +68,7 @@ def auto_clear_trash():
 
 @shared_task
 def auto_clear_scheduled_mails_history():
-    threshold_date = timezone.now() - timedelta(minutes=2)
+    threshold_date = timezone.now() - timedelta(days=30)
     scheduled_mails = ScheduledMail.objects.filter(
         status__in=[
             ScheduledMail.Status.SENT,
@@ -165,7 +165,7 @@ def auto_delete_users():
     from django.contrib.auth import get_user_model
     User = get_user_model()
 
-    threshold_date = timezone.now() - timedelta(minutes=1)
+    threshold_date = timezone.now() - timedelta(days=30)
     deleted_users = User.objects.filter(
         account_status=User.AccountStatus.DELETED,
         deleted_at__lte=threshold_date

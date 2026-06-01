@@ -259,35 +259,30 @@ CELERY_ENABLE_UTC = True
 CELERY_BEAT_SCHEDULE = {
     "auto-clear-trash": {
         "task": "files.tasks.auto_clear_trash",
-        # Runs every 30 days at midnight
-        "schedule": crontab(minute=0, hour=0, day_of_month="*/30"),
-        # "schedule": crontab(minute="*"),
+        # Runs daily at midnight
+        "schedule": crontab(minute=0, hour=0),
     },
 
     "auto-clear-scheduled-mails-history": {
         "task": "files.tasks.auto_clear_scheduled_mails_history",
-        # Runs every 30 days at midnight
-        "schedule": crontab(minute=0, hour=0, day_of_month="*/30"),
+        # Runs daily at 00:30
+        "schedule": crontab(minute=30, hour=0),
     },
 
     "auto-generate-monthly-reports": {
         "task": "files.tasks.auto_generate_report",
-        # Runs every 30 days at midnight
-        "schedule": crontab(minute=0, hour=0, day_of_month="*/30"),
-        # "schedule": crontab(minute="*"),
+        "schedule": crontab(minute=0, hour=0, day_of_month=1)
     },
     "auto-delete-users": {
         "task": "files.tasks.auto_delete_users",
-        "schedule": crontab(minute=0, hour=0, day_of_month="*/30"),  # runs monthly at midnight
-        # "schedule": crontab(minute="*"),
+        "schedule": crontab(minute=0, hour=1), 
     },
     'auto-clear-old-admin-logs': {
         'task': 'files.tasks.auto_clear_old_admin_logs',
-        "schedule": crontab(minute=0, hour=0, day_of_month="*/30"),
-        # 'schedule': timedelta(minutes=60),
+        "schedule": crontab(minute=30, hour=1),
     },
     "auto-delete-deactivated-users": {
         "task": "files.tasks.auto_delete_deactivated_users",
-        "schedule": crontab(minute=0, hour=0, day_of_month="*/30"),
+         "schedule": crontab(minute=0, hour=2),
     }
 }

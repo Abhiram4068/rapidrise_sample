@@ -1020,7 +1020,8 @@ class FileService:
     def user_restore_file(user, file_id):
         file_obj=File.objects.get(user= user, id=file_id)
         file_obj.is_deleted=False
-        file_obj.save(update_fields=['is_deleted'])
+        file_obj.deleted_at = None
+        file_obj.save(update_fields=['is_deleted', 'deleted_at'])
         NodeFile.objects.filter(vault_file=file_obj).update(status=NodeFile.Status.ACTIVE)
         CollectionFile.objects.filter(file=file_obj).update(status=CollectionFile.Status.ACTIVE)
         return file_obj
@@ -1032,7 +1033,7 @@ class FileService:
         files = File.objects.filter(id__in=file_ids, user=user, is_deleted=True)
         NodeFile.objects.filter(vault_file__in=files).update(status=NodeFile.Status.ACTIVE)
         CollectionFile.objects.filter(file__in=files).update(status=CollectionFile.Status.ACTIVE)
-        return files.update(is_deleted=False)
+        return files.update(is_deleted=False, deleted_at=None)
 
     @staticmethod
     def empty_user_trash(user):
@@ -1285,13 +1286,7 @@ class CollectionService:
 
     @staticmethod
     def create_collection(user, validated_data):
-        """Create a new collection for the user."""
-        try:
-            return Collection.objects.create(user=user, **validated_data)
-        except IntegrityError:
-            raise ValidationError({
-                "name": ["You already have a collection with this name."]
-            })
+        return Collection.objects.create(user=user, **validated_data)
 
     @staticmethod
     def update_collection(user, collection_id, validated_data):

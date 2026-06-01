@@ -685,11 +685,9 @@ class FileListView(APIView):
   pagination_class = DefaultPageNumberPagination
   def get(self, request):
       search = (request.query_params.get("search") or "").strip()
-      qs = FileService.user_list_files(user=request.user)  # should be a queryset
-      # Make sure you have a stable order
+      qs = FileService.user_list_files(user=request.user) 
       qs = qs.order_by("-created_at")
       if search:
-          # Must match serializer/view field
           qs = qs.filter(original_name__icontains=search)
       paginator = self.pagination_class()
       page_qs = paginator.paginate_queryset(qs, request, view=self)
@@ -1330,15 +1328,15 @@ class PublicFileAccessView(APIView):
         
 class CollectionListCreateView(APIView):
     permission_classes = [IsActiveAccount]
+    pagination_class = DefaultPageNumberPagination
 
     def get(self, request):
-        logger.info(f"Fetching collections | user_id={request.user.id}")
         collections = CollectionService.get_user_collections(request.user)
         search = request.query_params.get('search', '').strip()
 
         if search:
-            logger.info(f"Search applied | user_id={request.user.id} | search={search}")
             collections = collections.filter(name__icontains=search)
+
         sort_by = request.query_params.get('sort_by', 'created_at')
         sort_order = request.query_params.get('sort_order', 'desc')
         allowed_sort_fields = ['created_at', 'name', 'total_size', 'total_files']
@@ -1349,39 +1347,25 @@ class CollectionListCreateView(APIView):
             collections = collections.order_by(sort_by)
         else:
             collections = collections.order_by(f'-{sort_by}')
-        total_collections=collections.count()
-        logger.info(f"Collections fetched | user_id={request.user.id} | count={total_collections}")
 
-        serializer = CollectionSerializer(collections, many=True)
-        return Response(
-            {
-                "total_collections":total_collections,
-                "collections":serializer.data
-            },             
-            status=status.HTTP_200_OK
-            )
+        total_collections = collections.count()
+
+        paginator = self.pagination_class()
+        page_qs = paginator.paginate_queryset(collections, request, view=self)
+        serializer = CollectionSerializer(page_qs, many=True, context={'request': request})
+        response = paginator.get_paginated_response(serializer.data)
+        response.data['total_collections'] = total_collections
+        return response
 
     def post(self, request):
-        logger.info(f"Create collection request | user_id={request.user.id}")
-        serializer = CollectionSerializer(data=request.data)
+        serializer = CollectionSerializer(data=request.data, context={'request': request})
         if not serializer.is_valid():
-            logger.error(f"Invalid collection data | user_id={request.user.id} | errors={serializer.errors}")
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        try:
-            collection = CollectionService.create_collection(
-                user=request.user,
-                validated_data=serializer.validated_data,
-            )
-            logger.info(
-                f"Collection created successfully | user_id={request.user.id} | collection_id={collection.id}"
-            )
-        except ValidationError as e:
-            logger.error(f"Validation error | user_id={request.user.id} | error={e}")
-            return Response({"detail": e.detail}, status=status.HTTP_400_BAD_REQUEST)
-        return Response(
-            CollectionSerializer(collection).data,
-            status=status.HTTP_201_CREATED,
+        collection = CollectionService.create_collection(
+            user=request.user,
+            validated_data=serializer.validated_data,
         )
+        return Response(CollectionSerializer(collection).data, status=status.HTTP_201_CREATED)
 
 
 class CollectionDetailView(APIView):
@@ -1396,7 +1380,11 @@ class CollectionDetailView(APIView):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     def patch(self, request, collection_id):
-        serializer = CollectionSerializer(data=request.data, partial=True)
+        try:
+            collection = CollectionService.get_single_collection(request.user, collection_id)
+        except ValidationError as e:
+            return Response({"detail": e.message}, status=status.HTTP_404_NOT_FOUND)
+        serializer = CollectionSerializer(collection, data=request.data, partial=True, context={'request': request})
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         try:
