@@ -1341,7 +1341,7 @@ class CollectionService:
         )
 
         if not created:
-            raise DRFValidationError("This file is already in the collection.")
+            raise DRFValidationError({"detail":"This file is already in the collection."})
 
         return collection_file
     
