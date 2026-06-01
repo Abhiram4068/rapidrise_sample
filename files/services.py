@@ -1793,19 +1793,18 @@ class ViewFileShareService:
         return None
 
     @staticmethod
-    def _mark_bundle_package_accessed(bundle, accessed_at=None, mark_download=False):
-        """When a bundle link is used, mark every share link in the package as accessed."""
-        from .models import FileShareLink
-
+    def _mark_bundle_package_accessed(bundle, accessed_at=None):
+        """
+        Record the first time the bundle was accessed (bundle-level timestamp only).
+        Individual recipient share links are tracked separately — each recipient's
+        FileShareLink.accessed / accessed_at is set only for that specific link,
+        never bulk-updated here, so one recipient opening their link cannot change
+        the status of other recipients.
+        """
         if bundle is None:
             return
 
         now = accessed_at or timezone.now()
-        link_updates = {'accessed': True, 'accessed_at': now}
-        if mark_download:
-            link_updates['download_count'] = bundle.download_count or 0
-
-        FileShareLink.objects.filter(bundle=bundle).update(**link_updates)
 
         if bundle.accessed_at is None:
             bundle.accessed_at = now
@@ -1979,10 +1978,8 @@ class ViewFileShareService:
                 if not isinstance(share, ShareBundle) and getattr(share, 'bundle_id', None):
                     bundle.download_count = (bundle.download_count or 0) + 1
                     bundle.save(update_fields=['download_count'])
-                ViewFileShareService._mark_bundle_package_accessed(
-                    bundle,
-                    mark_download=True,
-                )
+                # Only update the bundle-level accessed_at; do NOT touch other recipients' share links.
+                ViewFileShareService._mark_bundle_package_accessed(bundle)
 
         # ── Deactivation check (runs after either action) ──────────────────────
         if not ViewFileShareService.enforces_access_limits(share):
