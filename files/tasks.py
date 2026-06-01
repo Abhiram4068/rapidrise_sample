@@ -1,7 +1,8 @@
 from celery import shared_task
 from django.utils import timezone
 from datetime import timedelta
-
+import logging
+logger = logging.getLogger(__name__)
 from .models import ScheduledMail, File
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)
@@ -53,7 +54,7 @@ def auto_clear_trash():
     """
     celery task to clear trash after 30 days
     """    
-    threshold_date = timezone.now() - timedelta(minutes=2)
+    threshold_date = timezone.now() - timedelta(days=30)
     trashed_files = File.objects.filter(
         is_deleted=True,
         deleted_at__lte=threshold_date
@@ -67,7 +68,7 @@ def auto_clear_trash():
 
 @shared_task
 def auto_clear_scheduled_mails_history():
-    threshold_date = timezone.now() - timedelta(minutes=2)
+    threshold_date = timezone.now() - timedelta(days=30)
     scheduled_mails = ScheduledMail.objects.filter(
         status__in=[
             ScheduledMail.Status.SENT,
@@ -84,7 +85,7 @@ def auto_clear_scheduled_mails_history():
         for mail in scheduled_mails:
             mail_id = mail.id
             mail.delete()
-            print(f"Deleted scheduled mail history: {mail_id}")
+            logger.info(f"Deleted scheduled mail history: {mail_id}")
     return f"Cleared {count} scheduled mails history"
     
 @shared_task
@@ -96,14 +97,15 @@ def auto_generate_report():
     
     User = get_user_model()
     users = User.objects.filter(account_status=User.AccountStatus.ACTIVE, monthly_report_enabled=True)
-    print("[REPORT_GEN_V2] Starting monthly report generation...")
     
     for user in users:
-        print(f"Users found for reports: {user.email}")
+        logger.info(f"Users found for reports: {user.email}")
         try:
-            print(f"Generating report for: {user.email}")
+            logger.info(f"Generating report for: {user.email}")
             
             shares, mails = ReportService.get_queryset(user, timeline='monthly', search='')
+            if not shares.exists() and not mails.exists():
+                continue
             data = ReportService.build_response_data(shares, mails)
             csv_buffer = ReportService.generate_csv(data)
             csv_content = csv_buffer.getvalue()
@@ -125,22 +127,37 @@ def auto_generate_report():
                 content_type="text/csv"
             )
             
-            print(f"Report saved for {user.email}: {file_name}")
+            logger.info(f"Report saved for {user.email}: {file_name}")
             
             # Also email the CSV to the user
-            from django.core.mail import EmailMessage
-            email = EmailMessage(
-                subject="Your Monthly Report",
-                body=f"Hello,\n\nPlease find your monthly report ({file_name}) attached for your review. It has also been saved to your 'Files' section in the app.",
-                to=[user.email],
+            from django.conf import settings
+            from .email_template import build_simple_notification_html, send_templated_email
+            plain_body = (
+                f"Hello,\n\n"
+                f"Please find your monthly report ({file_name}) attached for your review. "
+                f"It has also been saved to your 'Files' section in the app."
             )
-            email.attach(file_name, csv_content, "text/csv")
-            email.send()
+            send_templated_email(
+                subject="Your Monthly Report",
+                body=plain_body,
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                to=[user.email],
+                attachments=[(file_name, csv_content, "text/csv")],
+                content_html=build_simple_notification_html(
+                    eyebrow='Monthly report',
+                    title='Your report is ready',
+                    paragraphs=[
+                        'Your monthly activity report has been generated and attached to this email.',
+                        f'File name: {file_name}',
+                        "A copy has also been saved to your Files section in HiveDrive.",
+                    ],
+                ),
+            )
             
-            print(f"Report emailed to {user.email}")
+            logger.info(f"Report emailed to {user.email}")
             
         except Exception as e:
-            print(f"Failed for {user.email}: {e}")
+            logger.error(f"Failed for {user.email}: {e}")
 
 
 @shared_task
@@ -148,7 +165,7 @@ def auto_delete_users():
     from django.contrib.auth import get_user_model
     User = get_user_model()
 
-    threshold_date = timezone.now() - timedelta(minutes=1)
+    threshold_date = timezone.now() - timedelta(days=30)
     deleted_users = User.objects.filter(
         account_status=User.AccountStatus.DELETED,
         deleted_at__lte=threshold_date
@@ -157,7 +174,7 @@ def auto_delete_users():
     for user in deleted_users:
         email = user.email
         user.delete()
-        print(f"Permanently deleted user: {email}")
+        logger.info(f"Permanently deleted user: {email}")
     return f"Permanently deleted {count} users"
 
 
@@ -168,5 +185,22 @@ def auto_clear_old_admin_logs():
     logs = AdminLog.objects.filter(timestamp__lte=threshold_date)
     count = logs.count()
     logs.delete()
-    print(f"Cleared {count} admin logs older than 30 days")
+    logger.info(f"Cleared {count} admin logs older than 30 days")
     return f"Cleared {count} old admin logs"
+
+@shared_task
+def auto_delete_deactivated_users():
+    from django.contrib.auth import get_user_model
+    User = get_user_model()
+
+    threshold_date = timezone.now() - timedelta(days=30)
+    deactivated_users = User.objects.filter(
+        account_status=User.AccountStatus.DEACTIVATED,
+        deactivated_at__lte=threshold_date
+    )
+    count = deactivated_users.count()
+    for user in deactivated_users:
+        email = user.email
+        user.delete()
+        logger.info(f"Permanently deleted deactivated user: {email}")
+    return f"Deleted {count} deactivated users"
