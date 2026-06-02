@@ -644,11 +644,17 @@ class FileService:
                         if existing_file.file:
                             existing_file.file.delete(save=False)
                         
-                        existing_file.file.name = uploaded_path
-                        existing_file.original_name = file_obj.name
-                        existing_file.file_size = file_obj.size
-                        existing_file.content_type = file_obj.content_type
-                        existing_file.save()
+                        from django.core.files import File as DjangoFile
+                        with open(final_full_path, "rb") as f:
+                            django_file = DjangoFile(f, name=file_obj.name)
+                            existing_file.file = django_file
+                            existing_file.original_name = file_obj.name
+                            existing_file.file_size = file_obj.size
+                            existing_file.content_type = file_obj.content_type
+                            existing_file.save()
+                        
+                        if os.path.exists(final_full_path):
+                            os.remove(final_full_path)
                         
                         return {
                             "id": str(existing_file.id),
@@ -661,15 +667,21 @@ class FileService:
 
                 StorageService.claim(user.id, file_obj.size)
                 
-                new_file = File.objects.create(
-                    user=user,
-                    file=uploaded_path,
-                    original_name=file_obj.name,
-                    file_size=file_obj.size,
-                    content_type=file_obj.content_type,
-                    checksum=checksum,
-                    description=description
-                )
+                from django.core.files import File as DjangoFile
+                with open(final_full_path, "rb") as f:
+                    django_file = DjangoFile(f, name=file_obj.name)
+                    new_file = File.objects.create(
+                        user=user,
+                        file=django_file,
+                        original_name=file_obj.name,
+                        file_size=file_obj.size,
+                        content_type=file_obj.content_type,
+                        checksum=checksum,
+                        description=description
+                    )
+                
+                if os.path.exists(final_full_path):
+                    os.remove(final_full_path)
                 
                 return {
                     "id": str(new_file.id),
@@ -776,11 +788,17 @@ class FileService:
                             if existing_file.file:
                                 existing_file.file.delete(save=False)
                             
-                            existing_file.file.name = uploaded_path
-                            existing_file.original_name = file_obj.name
-                            existing_file.file_size = file_obj.size
-                            existing_file.content_type = file_obj.content_type
-                            existing_file.save()
+                            from django.core.files import File as DjangoFile
+                            with open(full_path, "rb") as f:
+                                django_file = DjangoFile(f, name=file_obj.name)
+                                existing_file.file = django_file
+                                existing_file.original_name = file_obj.name
+                                existing_file.file_size = file_obj.size
+                                existing_file.content_type = file_obj.content_type
+                                existing_file.save()
+                            
+                            if os.path.exists(full_path):
+                                os.remove(full_path)
                             
                             uploaded_files.append({
                                 "id": str(existing_file.id),
@@ -796,15 +814,21 @@ class FileService:
                     # 4. Storage Quota Check and DB Record Creation
                     StorageService.claim(user.id, file_obj.size)
                     
-                    new_file = File.objects.create(
-                        user=user,
-                        file=uploaded_path,
-                        original_name=file_obj.name,
-                        file_size=file_obj.size,
-                        content_type=file_obj.content_type,
-                        checksum=checksum,
-                        description=description
-                    )
+                    from django.core.files import File as DjangoFile
+                    with open(full_path, "rb") as f:
+                        django_file = DjangoFile(f, name=file_obj.name)
+                        new_file = File.objects.create(
+                            user=user,
+                            file=django_file,
+                            original_name=file_obj.name,
+                            file_size=file_obj.size,
+                            content_type=file_obj.content_type,
+                            checksum=checksum,
+                            description=description
+                        )
+                    
+                    if os.path.exists(full_path):
+                        os.remove(full_path)
                     
                     uploaded_files.append({
                         "id": str(new_file.id),
