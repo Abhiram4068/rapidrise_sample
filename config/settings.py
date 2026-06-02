@@ -17,7 +17,9 @@ import os
 from dotenv import load_dotenv
 from pathlib import Path
 from pythonjsonlogger import jsonlogger
-
+import cloudinary
+import cloudinary.uploader
+import cloudinary.api
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -30,15 +32,23 @@ load_dotenv(BASE_DIR / ".env")
 
 SECRET_KEY = os.getenv("SECRET_KEY")
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.getenv("DEBUG", "False") == "True"
-ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "").split(",")
-CORS_ALLOWED_ORIGINS = os.getenv("CORS_ALLOWED_ORIGINS", "").split(",")
+ALLOWED_HOSTS = [
+    ".onrender.com"
+]
+CORS_ALLOWED_ORIGINS = [
+    "https://inv-rr-git-deploy-render-hosting-abhiram-s-projects4.vercel.app",
+    "https://hivedrive.vercel.app"
+]
 CORS_ALLOW_CREDENTIALS = True
-SESSION_COOKIE_SAMESITE = "Lax"   # or "None" if cross-site
-SESSION_COOKIE_SECURE = False     # True in production (HTTPS)
-CSRF_COOKIE_SECURE = False
-CSRF_TRUSTED_ORIGINS = os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",")
+SESSION_COOKIE_SAMESITE = "None"  
+CSRF_COOKIE_SAMESITE ="None" 
+AUTH_COOKIE_SAMESITE ="None"
+SESSION_COOKIE_SECURE = True     # True in production (HTTPS)
+CSRF_COOKIE_SECURE = True
+CSRF_TRUSTED_ORIGINS = [
+    "https://inv-rr-git-deploy-render-hosting-abhiram-s-projects4.vercel.app",
+    "https://hivedrive.vercel.app"
+]
 
 
 # Application definition
@@ -55,6 +65,8 @@ INSTALLED_APPS = [
     'administration',
     'rest_framework',
     "corsheaders",
+    "cloudinary",
+    "cloudinary_storage",
 ]
 
 MIDDLEWARE = [
@@ -98,6 +110,16 @@ DATABASES = {
         'NAME': BASE_DIR / 'db.sqlite3',
         
     }
+}
+
+
+STORAGES = {
+    "default": {
+        "BACKEND": "cloudinary_storage.storage.MediaCloudinaryStorage",
+    },
+    "staticfiles": {
+        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+    },
 }
 
 
@@ -285,4 +307,9 @@ CELERY_BEAT_SCHEDULE = {
         "task": "files.tasks.auto_delete_deactivated_users",
          "schedule": crontab(minute=0, hour=2),
     }
+}
+CLOUDINARY_STORAGE = {
+    "CLOUD_NAME": os.getenv("CLOUDINARY_CLOUD_NAME"),
+    "API_KEY": os.getenv("CLOUDINARY_API_KEY"),
+    "API_SECRET": os.getenv("CLOUDINARY_API_SECRET"),
 }
