@@ -600,14 +600,6 @@ class FileService:
             
         checksum = hash_md5.hexdigest()
         
-        # Cleanup temp dir and DB session
-        shutil.rmtree(temp_dir, ignore_errors=True)
-        try:
-            session = ChunkUploadSession.objects.get(upload_id=upload_id, user=user)
-            ChunkUploadService.mark_completed(session)
-        except ChunkUploadSession.DoesNotExist:
-            pass
-        
         uploaded_path = final_relative_path
         
         class DummyFile:
@@ -653,6 +645,14 @@ class FileService:
                             existing_file.content_type = file_obj.content_type
                             existing_file.save()
                         
+                        # Cleanup temp dir and DB session on success
+                        shutil.rmtree(temp_dir, ignore_errors=True)
+                        try:
+                            session = ChunkUploadSession.objects.get(upload_id=upload_id, user=user)
+                            ChunkUploadService.mark_completed(session)
+                        except ChunkUploadSession.DoesNotExist:
+                            pass
+
                         if os.path.exists(final_full_path):
                             os.remove(final_full_path)
                         
@@ -680,6 +680,14 @@ class FileService:
                         description=description
                     )
                 
+                # Cleanup temp dir and DB session on success
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                try:
+                    session = ChunkUploadSession.objects.get(upload_id=upload_id, user=user)
+                    ChunkUploadService.mark_completed(session)
+                except ChunkUploadSession.DoesNotExist:
+                    pass
+
                 if os.path.exists(final_full_path):
                     os.remove(final_full_path)
                 

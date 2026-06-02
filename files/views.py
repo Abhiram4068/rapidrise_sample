@@ -556,6 +556,9 @@ class ChunkUploadView(APIView):
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             logger.error(f"Unexpected chunk upload error | error={str(e)}")
+            err_msg = str(e)
+            if "cloudinary" in err_msg.lower() or "limit" in err_msg.lower() or "exceeds" in err_msg.lower() or "storage" in err_msg.lower():
+                return Response({"error": err_msg}, status=status.HTTP_400_BAD_REQUEST)
             return Response({"error": "An unexpected error occurred."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
