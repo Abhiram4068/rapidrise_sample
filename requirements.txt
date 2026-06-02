@@ -1,4 +1,4 @@
-﻿amqp==5.3.1
+amqp==5.3.1
 asgiref==3.11.1
 async-timeout==5.0.1
 billiard==4.2.4
@@ -7,7 +7,6 @@ click==8.3.2
 click-didyoumean==0.3.1
 click-plugins==1.1.1.2
 click-repl==0.3.0
-colorama==0.4.6
 cron-descriptor==1.4.5
 dj-database-url==3.1.2
 Django==5.2.11
@@ -31,7 +30,7 @@ python-crontab==3.3.0
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.1
 python-json-logger==4.1.0
-python-magic-bin==0.4.14
+python-magic==0.4.27
 redis==7.4.0
 six==1.17.0
 sqlparse==0.5.5
