@@ -1,16 +1,25 @@
-from .models import User, File, FileShareLink, ShareBundle, Collection, CollectionFile, ScheduledMail, ReactivationRequest, DesignationChangeRequest
+from .models import User, File, FileShareLink, ShareBundle, Collection, CollectionFile, ScheduledMail, ReactivationRequest, DesignationChangeRequest, ProjectThread, ProjectNode, NodeDependency, NodeFile, NodeActivity, ProjectStage
 from rest_framework import serializers
 from django.contrib.auth.password_validation import validate_password
 from django.db import models
 from django.utils import timezone
-from datetime import timedelta
-from administration.models import Designation 
+from datetime import timedelta, date
+from administration.models import Designation
+from django.utils.http import urlsafe_base64_decode
+from django.utils.encoding import force_str
+from django.http import Http404
+from .services import StorageService, ViewFileShareService, NodeService
+from .upload_validation import (
+    ALLOWED_CONTENT_TYPES,
+    MAX_CHUNK_BYTES,
+    MAX_FILE_SIZE_BYTES,
+    MAX_STORAGE_BYTES,
+    format_bytes as _format_bytes,
+)
+import magic
+import re
 import logging
 logger = logging.getLogger(__name__)
-
-import re
-from datetime import date
-from django.utils import timezone
 
 
 class RegisterSerializer(serializers.ModelSerializer):
@@ -137,7 +146,7 @@ class ResetPasswordSerializer(serializers.Serializer):
             raise serializers.ValidationError({"new_password": "Password must contain at least 8 characters."})
         if len(new_password) > 128:
             raise serializers.ValidationError({"new_password": "Password must not exceed 128 characters."})
-        import re
+
         strong_password_regex = r'^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&]).{8,}$'
         if not re.match(strong_password_regex, new_password):
             raise serializers.ValidationError({
@@ -148,8 +157,7 @@ class ResetPasswordSerializer(serializers.Serializer):
         validate_password(new_password)
         uid = data.get("uid")
         if uid:
-            from django.utils.http import urlsafe_base64_decode
-            from django.utils.encoding import force_str
+
             try:
                 user_id = force_str(urlsafe_base64_decode(uid))
                 user = User.objects.get(pk=user_id)
@@ -397,16 +405,7 @@ class DeactivateAccountSerializer(serializers.Serializer):
         return value
 
       
-import magic
-from rest_framework import serializers
-from .services import StorageService
-from .upload_validation import (
-    ALLOWED_CONTENT_TYPES,
-    MAX_CHUNK_BYTES,
-    MAX_FILE_SIZE_BYTES,
-    MAX_STORAGE_BYTES,
-    format_bytes as _format_bytes,
-)
+
 
 
 # ─── Chunk upload serializer ──────────────────────────────────────────────────
@@ -549,7 +548,7 @@ class ChunkUploadControlSerializer(serializers.Serializer):
     action = serializers.ChoiceField(choices=ACTION_CHOICES)
 
     def validate_upload_id(self, value):
-        import re
+
         if not re.match(r"^[a-zA-Z0-9_-]+$", str(value)):
             raise serializers.ValidationError("Invalid upload_id format.")
         return value
@@ -1116,8 +1115,7 @@ class PublicFileSerializer(serializers.Serializer):
     token = serializers.CharField()
 
     def validate(self, data):
-        from .services import ViewFileShareService
-        from django.http import Http404
+
         try:
             self.share = ViewFileShareService.get_share_or_404(data['token'])
         except (Http404, ValueError) as e:
@@ -1168,8 +1166,7 @@ class StorageSummarySerializer(serializers.Serializer):
 
 
 
-from rest_framework import serializers
-from .models import ProjectThread, ProjectNode, NodeDependency, NodeFile, NodeActivity, ProjectStage
+
 
 
 # ─── Thread ───────────────────────────────────────────────────────────────────
@@ -1215,7 +1212,7 @@ class ThreadSerializer(serializers.ModelSerializer):
     def get_node_count(self, obj):
         return obj.nodes.filter(is_deleted=False).count()
     def get_file_count(self, obj):
-        from files.models import NodeFile
+
         return NodeFile.objects.filter(node__thread=obj, status=NodeFile.Status.ACTIVE).count()
 
 
@@ -1401,7 +1398,7 @@ class GraphNodeSerializer(serializers.ModelSerializer):
         return obj.branch_root_id is not None
 
     def get_is_root(self, obj):
-        from .services import NodeService
+
         return NodeService.is_root_node(obj)
 
     def get_file_count(self, obj):
