@@ -1,6 +1,5 @@
 import html as html_module
-
-from django.core.mail import EmailMultiAlternatives, send_mail as django_send_mail
+from files.brevo_service import BrevoEmailService
 
 
 def _esc(value) -> str:
@@ -247,14 +246,16 @@ def send_templated_html_mail(
     fail_silently=False,
 ):
     html_message = get_email_template(content_html)
-    django_send_mail(
+    success = BrevoEmailService.send_email(
         subject=subject,
-        message=plain_message,
-        from_email=from_email,
+        text_content=plain_message,
         recipient_list=recipient_list,
-        fail_silently=fail_silently,
-        html_message=html_message,
+        html_content=html_message,
+        from_email=from_email,
     )
+    if not success and not fail_silently:
+        raise RuntimeError(f"Failed to send email to {recipient_list} via Brevo API")
+    return success
 
 
 def send_templated_mail(
@@ -285,7 +286,7 @@ def send_templated_mail(
         cta_text=cta_text,
         cta_url=cta_url,
     )
-    send_templated_html_mail(
+    return send_templated_html_mail(
         subject, message, content, from_email, recipient_list, fail_silently
     )
 
@@ -303,9 +304,16 @@ def send_templated_email(
         paragraphs=[p.strip() for p in body.strip().split('\n\n') if p.strip()],
     )
     html_message = get_email_template(inner)
-    email = EmailMultiAlternatives(subject, body, from_email, to)
-    email.attach_alternative(html_message, 'text/html')
-    if attachments:
-        for name, content, mimetype in attachments:
-            email.attach(name, content, mimetype)
-    email.send()
+    
+    # Send via Brevo API
+    success = BrevoEmailService.send_email(
+        subject=subject,
+        text_content=body,
+        recipient_list=to,
+        html_content=html_message,
+        from_email=from_email,
+        attachments=attachments,
+    )
+    if not success:
+        raise RuntimeError(f"Failed to send email to {to} via Brevo API")
+    return success
