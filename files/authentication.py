@@ -15,11 +15,11 @@ class CookieJWTAuthentication(JWTAuthentication):
     def authenticate(self, request):
         raw_token = None
 
-        # ✅ 1. Try cookie FIRST (primary auth method)
+        #1. Try cookie FIRST (primary auth method)
         cookie_name = getattr(settings, "AUTH_COOKIE_ACCESS", "access_token")
         raw_token = request.COOKIES.get(cookie_name)
 
-        # ✅ 2. Optional fallback to header (only if cookie missing)
+        # 2. Optional fallback to header (only if cookie missing)
         if raw_token is None:
             header = self.get_header(request)
             if header is not None:
@@ -38,7 +38,7 @@ class CookieJWTAuthentication(JWTAuthentication):
         if user is None:
             raise AuthenticationFailed("User not found")
 
-        # ✅ Check account status (e.g., Blocked, Deleted)
+        #Check account status (e.g., Blocked, Deleted)
         # This ensures that even if a user has a valid token, they are blocked immediately
         # if their account status changes.
         if hasattr(user, "account_status"):

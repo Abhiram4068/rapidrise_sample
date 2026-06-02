@@ -1,34 +1,98 @@
-from files.serializers import StorageSummarySerializer
-from files.services import StorageService
-from django.conf import settings
-from django.shortcuts import render
-from rest_framework.views import APIView
-from rest_framework.permissions import IsAuthenticated, AllowAny, IsAdminUser
-from rest_framework.response import Response
-from rest_framework import status
-from rest_framework_simplejwt.tokens import RefreshToken
-from rest_framework_simplejwt.exceptions import TokenError
-from django.http import FileResponse
-from django.core.exceptions import ValidationError, PermissionDenied
-from files.serializers import (
-    RegisterSerializer, LoginSerializer, UserProfileSerializer,ChangePasswordSerialzier, DeactivateAccountSerializer, ChunkUploadSerializer, ChunkUploadStatusQuerySerializer, ChunkUploadControlSerializer, FilesListSerializer, FileUpdateSerializer ,FileShareSerializer, FileShareCreateSerializer, PublicFileSerializer,CollectionSerializer, CollectionFileSerializer
-    ,ScheduledMailSerializer, FileShareListSerializer, ReportQuerySerializer, ToggleMonthlyReportSerializer, DesignationSerializer, ResetPasswordSerializer, ForgotPasswordSerializer, UserProfileUpdateSerializer,ReactivationRequestSerializer, DesignationChangeRequestListSerializer, DesignationChangeRequestCreateSerializer, DesignationChangeRequestAdminSerializer
-    )
-from files.models import ReactivationRequest, ShareBundle, ChunkUploadSession
-from files.services import (
-    create_user, authenticate_and_generate_token, AuthenticationError ,AuthService, UserProfileService, FileService, ChunkUploadService, FileShareService, ViewFileShareService, CollectionService, ReportService, AccountService, ThreadService, StageService, NodeService, DependencyService
-    )
-from rest_framework.pagination import PageNumberPagination
-from rest_framework.exceptions import NotFound, ValidationError as DRFValidationError
-from files.authentication import CookieJWTAuthentication
-from files.exceptions import StorageLimitExceeded
-from django.db.models import F, Sum, Q
-from rest_framework import serializers
-from .permissions import IsActiveAccount
-from .email_template import get_email_template
-
 import logging
+from datetime import datetime
+
+from django.conf import settings
+from django.core.exceptions import ValidationError
+from django.db.models import Q, Sum
+from django.http import FileResponse, HttpResponse
+from rest_framework import serializers, status
+from rest_framework.exceptions import NotFound, ValidationError as DRFValidationError
+from rest_framework.pagination import PageNumberPagination
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.views import APIView
+from rest_framework_simplejwt.exceptions import TokenError
+from rest_framework_simplejwt.tokens import RefreshToken
+
+from .exceptions import StorageLimitExceeded
+from .models import (
+    ChunkUploadSession,
+    NodeActivity,
+    NodeDependency,
+    NodeFile,
+    ProjectNode,
+    ProjectStage,
+    ProjectThread,
+)
+from .permissions import IsActiveAccount
+from .serializers import (
+    BulkFileShareSerializer,
+    ChangePasswordSerialzier,
+    ChunkUploadControlSerializer,
+    ChunkUploadSerializer,
+    ChunkUploadStatusQuerySerializer,
+    CollectionFileSerializer,
+    CollectionSerializer,
+    DeactivateAccountSerializer,
+    DependencySerializer,
+    DesignationChangeRequestCreateSerializer,
+    DesignationChangeRequestListSerializer,
+    DesignationSerializer,
+    FileShareCreateSerializer,
+    FileShareListSerializer,
+    FileShareSerializer,
+    FilesListSerializer,
+    FileUpdateSerializer,
+    ForgotPasswordSerializer,
+    GraphEdgeSerializer,
+    GraphNodeSerializer,
+    LoginSerializer,
+    NodeActivitySerializer,
+    NodeCreateSerializer,
+    NodeFileSerializer,
+    NodeFileUploadSerializer,
+    NodeSerializer,
+    NodeUpdateSerializer,
+    ProjectStageSerializer,
+    PublicFileSerializer,
+    ReactivationRequestSerializer,
+    RegisterSerializer,
+    ReportQuerySerializer,
+    ResetPasswordSerializer,
+    ScheduledMailSerializer,
+    ShareBundleSerializer,
+    StorageSummarySerializer,
+    ThreadCreateSerializer,
+    ThreadSerializer,
+    ToggleMonthlyReportSerializer,
+    UserProfileSerializer,
+    UserProfileUpdateSerializer,
+)
+from .services import (
+    AccountService,
+    AuthService,
+    AuthenticationError,
+    ChunkUploadService,
+    CollectionService,
+    DashboardClass,
+    DependencyService,
+    DesignationListService,
+    FileService,
+    FileShareService,
+    NodeService,
+    ReportService,
+    StageService,
+    StorageManagementService,
+    StorageService,
+    ThreadService,
+    UserProfileService,
+    ViewFileShareService,
+    authenticate_and_generate_token,
+    create_user,
+)
+
 logger = logging.getLogger(__name__)
+users_logger = logging.getLogger("users")
 
 
 
@@ -76,9 +140,11 @@ class RegisterView(APIView):
         serializer=RegisterSerializer(data=request.data)
         
         serializer.is_valid(raise_exception=True)
+        email = serializer.validated_data.get('email')
         try:
             create_user(serializer.validated_data)
         except ValueError as e:
+            users_logger.warning(f"Registration failed | email={email} | error={str(e)}")
             if "Email already exists" in str(e):
                 return Response(
                     {'email':str(e)},
@@ -88,6 +154,7 @@ class RegisterView(APIView):
                 {'error':str(e)},
                 status=status.HTTP_400_BAD_REQUEST
             )
+        users_logger.info(f"User registered successfully | email={email}")
         return Response(
             {'message':'User Registered successfully!!!'},
             status=status.HTTP_201_CREATED
@@ -97,7 +164,7 @@ class DesignationListView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
-        from .services import DesignationListService
+
         designations = DesignationListService.get_active_designations()
         serializer = DesignationSerializer(designations, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
@@ -109,12 +176,14 @@ class LoginView(APIView):
         serializer=LoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         
+        email = serializer.validated_data.get('email')
         try:
             result=authenticate_and_generate_token(
-                email=serializer.validated_data['email'],
+                email=email,
                 password=serializer.validated_data['password']
             )
         except AuthenticationError as e:
+            users_logger.warning(f"Login failed | email={email} | error={str(e)}")
             return Response(
                 {'error':str(e)},
                 status=status.HTTP_400_BAD_REQUEST
@@ -126,6 +195,7 @@ class LoginView(APIView):
             "user": UserProfileSerializer(user).data,
             "account_status": user.account_status
         }
+        users_logger.info(f"Login successful | email={user.email} | user_id={user.id}")
         response = Response(response_data, status=status.HTTP_200_OK)
         _set_auth_cookies(response, tokens["access"], tokens["refresh"])
 
@@ -161,7 +231,7 @@ class TokenRefreshCookieView(APIView):
                 User = get_user_model()
                 user = User.objects.get(id=user_id)
                 
-                # ✅ Check account status
+  
                 if hasattr(user, "account_status") and user.account_status in ["blocked", "deleted"]:
                     response = Response(
                         {"detail": f"Access denied. Your account is {user.account_status}."},
@@ -186,6 +256,18 @@ class LogoutView(APIView):
     authentication_classes = []
 
     def post(self, request):
+        user_email = None
+        try:
+            from files.authentication import CookieJWTAuthentication
+            auth_res = CookieJWTAuthentication().authenticate(request)
+            if auth_res is not None:
+                user, _ = auth_res
+                user_email = user.email
+        except Exception:
+            pass
+
+        if user_email:
+            users_logger.info(f"Logout successful | email={user_email}")
         response = Response({"message": "Logged out"}, status=status.HTTP_200_OK)
         _clear_auth_cookies(response)
         return response
@@ -198,8 +280,10 @@ class ForgotPasswordView(APIView):
         serializer = ForgotPasswordSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
+        email = serializer.validated_data["email"]
         # Always return 200 — never reveal if the email exists
-        data=AuthService.request_password_reset(serializer.validated_data["email"])
+        data=AuthService.request_password_reset(email)
+        users_logger.info(f"Password reset requested | email={email}")
         return Response(data)
 
 class ResetPasswordView(APIView):
@@ -210,15 +294,30 @@ class ResetPasswordView(APIView):
         serializer = ResetPasswordSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
+        uid = serializer.validated_data["uid"]
         try:
             AuthService.confirm_password_reset(
-                uid          = serializer.validated_data["uid"],
+                uid          = uid,
                 token        = serializer.validated_data["token"],
                 new_password = serializer.validated_data["new_password"],
             )
         except ValueError as e:
+            users_logger.warning(f"Password reset confirmation failed | error={str(e)}")
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
+        user_email = "Unknown User"
+        try:
+            from django.utils.http import urlsafe_base64_decode
+            from django.utils.encoding import force_str
+            from django.contrib.auth import get_user_model
+            user_id = force_str(urlsafe_base64_decode(uid))
+            User = get_user_model()
+            user = User.objects.get(pk=user_id)
+            user_email = user.email
+        except Exception:
+            pass
+
+        users_logger.info(f"Password reset successful | email={user_email}")
         return Response(
             {"detail": "Password reset successful. You can now log in."},
             status=status.HTTP_200_OK,
@@ -263,14 +362,15 @@ class DeactivateAccountView(APIView):
     serializer_class = DeactivateAccountSerializer
 
     def post(self, request):
-        print(request.data)
         serializer = self.serializer_class(
             data=request.data,
             context={'request': request}
         )
         serializer.is_valid(raise_exception=True)
         
-        AuthService.deactivate_account(user=request.user)
+        user = request.user
+        AuthService.deactivate_account(user=user)
+        users_logger.info(f"Account deactivated successfully | email={user.email} | user_id={user.id}")
         
         response = Response(
             {"message": "Account deactivated successfully. You can request reactivation later if needed."},
@@ -283,39 +383,17 @@ class ReactivationRequestView(APIView):
     permission_classes = [IsAuthenticated]
     serializer_class = ReactivationRequestSerializer
 
-    def get(self, request):
-        # Admin can search through all requests, regular users see their own
-        if request.user.is_staff or request.user.is_superuser:
-            queryset = ReactivationRequest.objects.all().order_by('-created_at')
-            search = request.query_params.get('search', '').strip()
-            if search:
-                queryset = queryset.filter(
-                    Q(user__email__icontains=search) |
-                    Q(user__first_name__icontains=search) |
-                    Q(user__last_name__icontains=search) |
-                    Q(reason__icontains=search)
-                )
-        else:
-            queryset = ReactivationRequest.objects.filter(user=request.user).order_by('-created_at')
-
-        paginator = DefaultPageNumberPagination()
-        page = paginator.paginate_queryset(queryset, request, view=self)
-        
-        if page is not None:
-            serializer = self.serializer_class(page, many=True, context={'request': request})
-            return paginator.get_paginated_response(serializer.data)
-
-        serializer = self.serializer_class(queryset, many=True, context={'request': request})
-        return Response(serializer.data)
-
     def post(self, request):
         serializer = self.serializer_class(data=request.data)
         serializer.is_valid(raise_exception=True)
         
+        user = request.user
+        reason = serializer.validated_data['reason']
         AccountService.submit_reactivation_request(
-            user=request.user,
-            reason=serializer.validated_data['reason']
+            user=user,
+            reason=reason
         )
+        users_logger.info(f"Reactivation request submitted | email={user.email} | user_id={user.id} | reason={reason}")
         
         return Response(
             {"message": "Reactivation request submitted successfully. The admin will review it soon."},
@@ -355,9 +433,6 @@ class DesignationChangeRequestView(APIView):
         out = DesignationChangeRequestListSerializer(request_obj)
         return Response(out.data, status=status.HTTP_201_CREATED)
 
-
-import time
-from rest_framework.exceptions import ValidationError
 
 class ChunkUploadView(APIView):
     permission_classes = [IsActiveAccount]
@@ -610,11 +685,9 @@ class FileListView(APIView):
   pagination_class = DefaultPageNumberPagination
   def get(self, request):
       search = (request.query_params.get("search") or "").strip()
-      qs = FileService.user_list_files(user=request.user)  # should be a queryset
-      # Make sure you have a stable order
+      qs = FileService.user_list_files(user=request.user) 
       qs = qs.order_by("-created_at")
       if search:
-          # Must match serializer/view field
           qs = qs.filter(original_name__icontains=search)
       paginator = self.pagination_class()
       page_qs = paginator.paginate_queryset(qs, request, view=self)
@@ -657,7 +730,6 @@ class FileUpdateView(APIView):
         )
         
         serializer.is_valid(raise_exception=True)
-        print(serializer.validated_data)
         file_obj = FileService.get_file_detail(
             user=request.user,
             file_id=pk
@@ -804,7 +876,6 @@ class BulkUnarchiveFileView(APIView):
         except ValueError as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
-from django.db.models import Q
 class ArchiveFile(APIView):
     """
     view for handling the get method for archived files
@@ -1030,9 +1101,6 @@ class FileShareCreateListUpdateView(APIView):
 
 
 
-from .serializers import BulkFileShareSerializer
-from .services import FileShareService
-from .serializers import ShareBundleSerializer
 
 
 class BulkFileShareView(APIView):
@@ -1257,52 +1325,18 @@ class PublicFileAccessView(APIView):
             file_obj, filename = ViewFileShareService.get_file_response(share)
             
         return FileResponse(file_obj, as_attachment=True, filename=filename)
-
-from django.utils import timezone
-
-class PublicFileVerifyView(APIView):
-    authentication_classes = []
-    permission_classes = []
-
-    def get(self, request, token):
-        serializer = PublicFileSerializer(data={'token': token})
-        if not serializer.is_valid():
-            error_message = next(iter(serializer.errors.values()))[0]
-            
-            status_code = status.HTTP_404_NOT_FOUND
-            if 'expired' in str(error_message).lower():
-                status_code = status.HTTP_410_GONE
-            elif 'revoked' in str(error_message).lower() or 'used' in str(error_message).lower():
-                status_code = status.HTTP_403_FORBIDDEN
-            
-            return Response({'error': str(error_message)}, status=status_code)
-
-        share = serializer.share
-        return Response({
-            'file_name': share.file.original_name,
-            'file_size': share.file.file_size,
-            'content_type': share.file.content_type,
-            'sender': share.owner.get_full_name() or share.owner.email,
-            'expiration': share.expiration_datetime,
-            'permission': share.permission,
-            'accessed': share.accessed,
-            'view_limit': share.view_limit,
-            'view_count': share.view_count,
-            'download_limit': share.download_limit,
-            'download_count': share.download_count,
-        })
-            
+        
 class CollectionListCreateView(APIView):
     permission_classes = [IsActiveAccount]
+    pagination_class = DefaultPageNumberPagination
 
     def get(self, request):
-        logger.info(f"Fetching collections | user_id={request.user.id}")
         collections = CollectionService.get_user_collections(request.user)
         search = request.query_params.get('search', '').strip()
 
         if search:
-            logger.info(f"Search applied | user_id={request.user.id} | search={search}")
             collections = collections.filter(name__icontains=search)
+
         sort_by = request.query_params.get('sort_by', 'created_at')
         sort_order = request.query_params.get('sort_order', 'desc')
         allowed_sort_fields = ['created_at', 'name', 'total_size', 'total_files']
@@ -1313,39 +1347,25 @@ class CollectionListCreateView(APIView):
             collections = collections.order_by(sort_by)
         else:
             collections = collections.order_by(f'-{sort_by}')
-        total_collections=collections.count()
-        logger.info(f"Collections fetched | user_id={request.user.id} | count={total_collections}")
 
-        serializer = CollectionSerializer(collections, many=True)
-        return Response(
-            {
-                "total_collections":total_collections,
-                "collections":serializer.data
-            },             
-            status=status.HTTP_200_OK
-            )
+        total_collections = collections.count()
+
+        paginator = self.pagination_class()
+        page_qs = paginator.paginate_queryset(collections, request, view=self)
+        serializer = CollectionSerializer(page_qs, many=True, context={'request': request})
+        response = paginator.get_paginated_response(serializer.data)
+        response.data['total_collections'] = total_collections
+        return response
 
     def post(self, request):
-        logger.info(f"Create collection request | user_id={request.user.id}")
-        serializer = CollectionSerializer(data=request.data)
+        serializer = CollectionSerializer(data=request.data, context={'request': request})
         if not serializer.is_valid():
-            logger.error(f"Invalid collection data | user_id={request.user.id} | errors={serializer.errors}")
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        try:
-            collection = CollectionService.create_collection(
-                user=request.user,
-                validated_data=serializer.validated_data,
-            )
-            logger.info(
-                f"Collection created successfully | user_id={request.user.id} | collection_id={collection.id}"
-            )
-        except ValidationError as e:
-            logger.error(f"Validation error | user_id={request.user.id} | error={e}")
-            return Response({"detail": e.detail}, status=status.HTTP_400_BAD_REQUEST)
-        return Response(
-            CollectionSerializer(collection).data,
-            status=status.HTTP_201_CREATED,
+        collection = CollectionService.create_collection(
+            user=request.user,
+            validated_data=serializer.validated_data,
         )
+        return Response(CollectionSerializer(collection).data, status=status.HTTP_201_CREATED)
 
 
 class CollectionDetailView(APIView):
@@ -1360,7 +1380,11 @@ class CollectionDetailView(APIView):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     def patch(self, request, collection_id):
-        serializer = CollectionSerializer(data=request.data, partial=True)
+        try:
+            collection = CollectionService.get_single_collection(request.user, collection_id)
+        except ValidationError as e:
+            return Response({"detail": e.message}, status=status.HTTP_404_NOT_FOUND)
+        serializer = CollectionSerializer(collection, data=request.data, partial=True, context={'request': request})
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         try:
@@ -1426,19 +1450,6 @@ class CollectionFileView(APIView):
         except ValidationError as e:
             return Response({"detail": e.message}, status=status.HTTP_400_BAD_REQUEST)
         return Response(status=status.HTTP_204_NO_CONTENT)
-
-
-
-import csv
-from django.http import HttpResponse
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework import status
-from django.core.exceptions import PermissionDenied
-from django.http import StreamingHttpResponse
-from datetime import datetime
-
-
 
 
 class ReportDownloadView(APIView):
@@ -1529,7 +1540,6 @@ class DashboardView(APIView):
     permission_classes = [IsActiveAccount]
 
     def get(self, request):
-        from files.services import DashboardClass
         data = DashboardClass.get_dashboard_data(request.user)
         
         # Serialize active links manually since it's simple
@@ -1570,8 +1580,6 @@ class StorageManagementView(APIView):
     pagination_class = DefaultPageNumberPagination
 
     def get(self, request):
-        from files.services import StorageManagementService
-        
         filter_type = request.query_params.get('filter_type', 'category') # category, duplicates, old
         category = request.query_params.get('category', 'All')
         search = request.query_params.get('search', '')
@@ -1594,8 +1602,6 @@ class StoragePermanentDeleteView(APIView):
     permission_classes = [IsActiveAccount]
 
     def post(self, request):
-        from files.services import StorageManagementService
-        
         file_ids = request.data.get('file_ids', [])
         if not file_ids:
             return Response({"error": "No file_ids provided"}, status=status.HTTP_400_BAD_REQUEST)
@@ -1605,50 +1611,6 @@ class StoragePermanentDeleteView(APIView):
             return Response({"message": f"Successfully deleted {len(file_ids)} files. Freed {total_freed} bytes."}, status=status.HTTP_200_OK)
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-
-
-
-
-
-"""
-views.py — request/response only. All logic delegated to services.
-
-URL structure:
-    /api/threads/                           GET, POST
-    /api/threads/<id>/                      GET, PUT, DELETE
-    /api/threads/<id>/graph/                GET  (ReactFlow payload)
-    /api/threads/<thread_id>/nodes/         GET, POST
-    /api/nodes/<id>/                        GET, PUT, DELETE
-    /api/nodes/<id>/branch/                 POST
-    /api/nodes/<id>/position/               PATCH  (drag on canvas)
-    /api/nodes/<id>/dependencies/           GET, POST
-    /api/dependencies/<id>/                 DELETE
-    /api/nodes/<id>/files/                  GET, POST
-    /api/files/<id>/                        DELETE
-    /api/nodes/<id>/activity/              GET
-"""
-
-from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.response import Response
-from rest_framework.views import APIView
-
-from .models import NodeDependency, NodeFile, ProjectNode, ProjectThread, NodeActivity, ProjectStage
-from .serializers import (
-    DependencySerializer,
-    GraphEdgeSerializer,
-    GraphNodeSerializer,
-    NodeActivitySerializer,
-    NodeCreateSerializer,
-    NodeFileSerializer,
-    NodeFileUploadSerializer,
-    NodeSerializer,
-    NodeUpdateSerializer,
-    ThreadCreateSerializer,
-    ThreadSerializer,
-    ProjectStageSerializer,
-)
-from .services import DependencyService, FileService, NodeService, ThreadService, StageService
 
 
 # ─── Thread ───────────────────────────────────────────────────────────────────
@@ -1755,13 +1717,7 @@ class ThreadStageListCreateView(APIView):
             
         serializer = ProjectStageSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        stage = serializer.save(thread=thread)
-        NodeActivity.objects.create(
-            stage=stage,
-            actor=request.user,
-            event_type=NodeActivity.EventType.CREATED,
-            message=f'Stage "{stage.name}" created.',
-        )
+        stage = StageService.create_stage(thread, serializer.validated_data, request.user)
         data = ProjectStageSerializer(stage).data
         data["detail"] = f'Stage "{stage.name}" created successfully.'
         return Response(data, status=status.HTTP_201_CREATED)
@@ -1947,12 +1903,7 @@ class DependencyListCreateView(APIView):
 
         target_id = serializer.validated_data["target_node"].id
         try:
-            target = ProjectNode.objects.get(pk=target_id, thread=source.thread, is_deleted=False)
-        except ProjectNode.DoesNotExist:
-            return Response({"detail": "Target node not found or belongs to a different thread."}, status=status.HTTP_404_NOT_FOUND)
-
-        try:
-            source.refresh_from_db()
+            target = DependencyService.get_target_node(target_id, source.thread)
             dep = DependencyService.add_dependency(
                 source, target,
                 serializer.validated_data.get("dependency_type", NodeDependency.DependencyType.DEPENDS_ON),

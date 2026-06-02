@@ -29,10 +29,8 @@ load_dotenv(BASE_DIR / ".env")
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-nci8&el^8m4l!d+!5#+hpq9#%orv79^t-+6-ppx_qy@o+dy3n_'
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = False
+SECRET_KEY = os.getenv("SECRET_KEY")
 
 ALLOWED_HOSTS = [
     ".onrender.com"
@@ -72,9 +70,8 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+      "corsheaders.middleware.CorsMiddleware",  
     'django.middleware.security.SecurityMiddleware',
-    'whitenoise.middleware.WhiteNoiseMiddleware',
-    "corsheaders.middleware.CorsMiddleware",      
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -106,31 +103,13 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
-# DATABASES = {
-#     'default': {
-#         'ENGINE': 'django.db.backends.mysql',
-#         'NAME': 'fileshare_db',
-#         'HOST':'localhost',
-#         'PASSWORD':'12345678',
-#         'USER':'root',
-#         'PORT':'3306'
-#     }
-# }
-# DATABASES = {
-#     'default': {
-#         'ENGINE': 'django.db.backends.sqlite3',
-#         'NAME': BASE_DIR / 'db.sqlite3',
-        
-#     }
-# }
-
-
-import dj_database_url
 
 DATABASES = {
-    'default': dj_database_url.config(
-        default=os.environ.get("DATABASE_URL")
-    )
+    'default': {
+        'ENGINE': 'django.db.backends.sqlite3',
+        'NAME': BASE_DIR / 'db.sqlite3',
+        
+    }
 }
 
 
@@ -163,13 +142,14 @@ AUTH_PASSWORD_VALIDATORS = [
 ]
 
 
+PASSWORD_RESET_TIMEOUT = int(os.getenv("PASSWORD_RESET_TIMEOUT", 300))
+
 # Internationalization
 # https://docs.djangoproject.com/en/6.0/topics/i18n/
 
 LANGUAGE_CODE = 'en-us'
 TIME_ZONE='Asia/Kolkata'
 USE_TZ = True
-TIME_ZONE = "Asia/Kolkata"
 
 USE_I18N = True
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
@@ -180,7 +160,6 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 STATIC_URL = 'static/'
-STATIC_ROOT = BASE_DIR / 'staticfiles'
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "files.authentication.CookieJWTAuthentication",
@@ -201,7 +180,7 @@ AUTH_COOKIE_ACCESS = "access_token"
 AUTH_COOKIE_REFRESH = "refresh_token"
 AUTH_COOKIE_SECURE = not DEBUG
 AUTH_COOKIE_HTTP_ONLY = True
-
+AUTH_COOKIE_SAMESITE = "Lax"
 
 EMAIL_BACKEND = os.getenv("EMAIL_BACKEND")
 
@@ -245,11 +224,6 @@ LOGGING = {
             "filename": LOGS_DIR / "files.log",
             "formatter": "standard",
         },
-        "collections_file": {
-            "class": "logging.FileHandler",
-            "filename": LOGS_DIR / "collections.log",
-            "formatter": "standard",
-        },
         "users_file": {
             "class": "logging.FileHandler",
             "filename": LOGS_DIR / "users.log",
@@ -270,11 +244,6 @@ LOGGING = {
         },
         "files": {
             "handlers": ["files_file"],
-            "level": "INFO",
-            "propagate": False,
-        },
-        "collections": {
-            "handlers": ["collections_file"],
             "level": "INFO",
             "propagate": False,
         },
@@ -312,33 +281,32 @@ CELERY_ENABLE_UTC = True
 CELERY_BEAT_SCHEDULE = {
     "auto-clear-trash": {
         "task": "files.tasks.auto_clear_trash",
-        # Runs every 30 days at midnight
-        "schedule": crontab(minute=0, hour=0, day_of_month="*/30"),
-        # "schedule": crontab(minute="*"),
+        # Runs daily at midnight
+        "schedule": crontab(minute=0, hour=0),
     },
 
     "auto-clear-scheduled-mails-history": {
         "task": "files.tasks.auto_clear_scheduled_mails_history",
-        # Runs every 30 days at midnight
-        "schedule": crontab(minute=0, hour=0, day_of_month="*/30"),
+        # Runs daily at 00:30
+        "schedule": crontab(minute=30, hour=0),
     },
 
     "auto-generate-monthly-reports": {
         "task": "files.tasks.auto_generate_report",
-        # Runs every 30 days at midnight
-        "schedule": crontab(minute=0, hour=0, day_of_month="*/30"),
-        # "schedule": crontab(minute="*"),
+        "schedule": crontab(minute=0, hour=0, day_of_month=1)
     },
     "auto-delete-users": {
         "task": "files.tasks.auto_delete_users",
-        #"schedule": crontab(minute=0, hour=0, day_of_month="*/30"),  # runs monthly at midnight
-        "schedule": crontab(minute="*"),
+        "schedule": crontab(minute=0, hour=1), 
     },
     'auto-clear-old-admin-logs': {
         'task': 'files.tasks.auto_clear_old_admin_logs',
-        "schedule": crontab(minute=0, hour=0, day_of_month="*/30"),
-        # 'schedule': timedelta(minutes=60),
+        "schedule": crontab(minute=30, hour=1),
     },
+    "auto-delete-deactivated-users": {
+        "task": "files.tasks.auto_delete_deactivated_users",
+         "schedule": crontab(minute=0, hour=2),
+    }
 }
 CLOUDINARY_STORAGE = {
     "CLOUD_NAME": os.getenv("CLOUDINARY_CLOUD_NAME"),

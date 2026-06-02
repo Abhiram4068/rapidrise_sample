@@ -31,7 +31,9 @@ class UserManager(BaseUserManager):
             raise ValueError('Super user must have is_active=True')
         return self.create_user(email=email, password=password, **extra_fields)
 class User(AbstractUser):
-
+    """
+    Stores registered users with email-based auth, storage limits, and account status.
+    """
     class AccountStatus(models.TextChoices):
         WAITING_FOR_APPROVAL = "Waiting For Approval", "Waiting For Approval"
         ACTIVE = "active", "Active"
@@ -60,6 +62,10 @@ class User(AbstractUser):
     storage_used_bytes = models.BigIntegerField(default=0)
     deleted_at=models.DateTimeField(null=True, blank=True)
     monthly_report_enabled = models.BooleanField(default=False)
+    deactivated_at = models.DateTimeField(
+        null=True,
+        blank=True
+    )
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = ['first_name', 'date_of_birth']
 
@@ -82,6 +88,9 @@ def default_expiry():
     return timezone.now() + timedelta(days=10)
 
 class File(models.Model):
+    """
+    Represents a file uploaded by a user, including metadata, soft-delete, and archive state.    
+    """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -117,7 +126,9 @@ class File(models.Model):
 
 
 class ChunkUploadSession(models.Model):
-    """Tracks in-progress chunked uploads for pause, resume, and retry."""
+    """
+    Tracks in-progress chunked uploads for pause, resume, and retry.
+    """
 
     class Status(models.TextChoices):
         UPLOADING = "uploading", "Uploading"
@@ -159,6 +170,9 @@ class ChunkUploadSession(models.Model):
 
 
 class FileShareLink(models.Model):
+    """
+    Manages secure file sharing via time-limited, token-based links.
+    """
     id=models.UUIDField(
         primary_key=True,
          default=uuid.uuid4,
@@ -216,6 +230,9 @@ class FileShareLink(models.Model):
         ordering = ["-created_at"]
 
 class ShareBundle(models.Model):
+    """
+    A bundle that holds multiple files and can be shared with multiple users.
+    """
     owner = models.ForeignKey(User, on_delete=models.CASCADE)
 
     share_token = models.CharField(max_length=255, unique=True)
@@ -247,8 +264,14 @@ class ShareBundle(models.Model):
     accessed_at = models.DateTimeField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
+    class Meta:
+        db_table = "share_bundles"
+
 
 class ShareBundleItem(models.Model):
+    """
+    Maps individual files to a share bundle.
+    """
     bundle = models.ForeignKey(
         ShareBundle,
         related_name='items',
@@ -257,8 +280,14 @@ class ShareBundleItem(models.Model):
 
     file = models.ForeignKey(File, on_delete=models.CASCADE)
 
+    class Meta:
+        db_table = "share_bundle_items"
+
 
 class BundleRecipient(models.Model):
+    """
+    Tracks individual recipients for a share bundle.
+    """
     bundle = models.ForeignKey(
         ShareBundle,
         related_name='recipients',
@@ -271,10 +300,16 @@ class BundleRecipient(models.Model):
 
     created_at = models.DateTimeField(auto_now_add=True)
 
+    class Meta:
+        db_table = "bundle_recipients"
+
 
 
 
 class ScheduledMail(models.Model):
+    """
+    Tracks scheduled mails for file shares.
+    """
     class Status(models.TextChoices):
         PENDING = "pending", "Pending"
         SENT = "sent", "Sent"
@@ -309,6 +344,9 @@ class ScheduledMail(models.Model):
     
 #collections for files
 class Collection(models.Model):
+    """
+    A collection of files.
+    """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -346,6 +384,9 @@ class Collection(models.Model):
 
 
 class CollectionFile(models.Model):
+    """
+    Maps individual files to a collection.
+    """
     class Status(models.TextChoices):
         ACTIVE = "ACTIVE", "Active"
         ARCHIVED = "ARCHIVED", "Archived"
@@ -389,7 +430,9 @@ class CollectionFile(models.Model):
 
 
 class DesignationChangeRequest(models.Model):
-
+    """
+    A user's request to change their designation, pending admin approval or rejection.
+    """
     class StatusChoices(models.TextChoices):
         PENDING  = "pending",  "Pending"
         APPROVED = "approved", "Approved"
@@ -443,6 +486,9 @@ class DesignationChangeRequest(models.Model):
 
 #threads
 class ProjectThread(models.Model):
+    """
+    A thread for managing a project.
+    """
     title = models.CharField(max_length=255)
     description = models.TextField(blank=True)
     created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name="threads")
@@ -452,10 +498,14 @@ class ProjectThread(models.Model):
         return self.title
  
     class Meta:
+        db_table = "project_threads"
         ordering = ["-created_at"]
  
  
 class ProjectStage(models.Model):
+    """
+    A stage in a project thread.
+    """
     thread = models.ForeignKey(ProjectThread, on_delete=models.CASCADE, related_name="stages")
     name = models.CharField(max_length=255)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -464,11 +514,14 @@ class ProjectStage(models.Model):
         return f"{self.thread.title} - {self.name}"
 
     class Meta:
+        db_table = "project_stages"
         ordering = ["created_at"]
 
 
 class ProjectNode(models.Model):
- 
+    """
+    A node in a project thread.
+    """
     class Status(models.TextChoices):
         INACTIVE = "INACTIVE", "Inactive"
         ACTIVE = "ACTIVE", "Active"
@@ -505,11 +558,14 @@ class ProjectNode(models.Model):
         return f"{self.thread.title} → {self.title}"
  
     class Meta:
+        db_table = "project_nodes"
         ordering = ["created_at"]
  
  
 class NodeDependency(models.Model):
- 
+    """
+    A dependency between two nodes in a project thread.
+    """
     class DependencyType(models.TextChoices):
         DEPENDS_ON = "DEPENDS_ON", "Depends On"
         REQUIRED_FOR = "REQUIRED_FOR", "Required For"
@@ -530,6 +586,7 @@ class NodeDependency(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
  
     class Meta:
+        db_table = "node_dependencies"
         unique_together = ("source_node", "target_node")
  
     def __str__(self):
@@ -537,6 +594,9 @@ class NodeDependency(models.Model):
  
  
 class NodeFile(models.Model):
+    """
+    A file associated with a node in a project thread.
+    """
     class Status(models.TextChoices):
         ACTIVE = "ACTIVE", "Active"
         ARCHIVED = "ARCHIVED", "Archived"
@@ -556,11 +616,14 @@ class NodeFile(models.Model):
         return f"{self.node.title} / {self.original_name}"
  
     class Meta:
+        db_table = "node_files"
         ordering = ["-created_at"]
  
  
 class NodeActivity(models.Model):
- 
+    """
+    An audit log entry recording actions performed on a project node.
+    """ 
     class EventType(models.TextChoices):
         CREATED = "CREATED", "Created"
         UPDATED = "UPDATED", "Updated"
@@ -580,9 +643,13 @@ class NodeActivity(models.Model):
         return f"{self.node.title} — {self.event_type}"
  
     class Meta:
+        db_table = "node_activities"
         ordering = ["-created_at"]
 
 class ReactivationRequest(models.Model):
+    """
+    A request for a user to be reactivated.
+    """  
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(
         User,
