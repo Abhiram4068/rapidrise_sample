@@ -13,7 +13,9 @@ supabase = create_client(
 @deconstructible
 class SupabaseStorage(Storage):
     def __init__(self, bucket_name='files'):
-        self.bucket_name = getattr(settings, 'SUPABASE_BUCKET', bucket_name)
+        # Fallback to 'files' if SUPABASE_BUCKET is None or not set
+        setting_bucket = getattr(settings, 'SUPABASE_BUCKET', None)
+        self.bucket_name = setting_bucket if setting_bucket else bucket_name
         self.client = supabase
 
     def _open(self, name, mode='rb'):
@@ -57,9 +59,18 @@ class SupabaseStorage(Storage):
             return False
 
     def url(self, name):
-        # Generate a signed URL valid for 1 hour (3600 seconds)
-        res = self.client.storage.from_(self.bucket_name).create_signed_url(name, 3600)
-        return res.get('signedURL') if isinstance(res, dict) else res
+        try:
+            # Generate a signed URL valid for 1 hour (3600 seconds)
+            res = self.client.storage.from_(self.bucket_name).create_signed_url(name, 3600)
+            if isinstance(res, dict):
+                return res.get('signedURL', '')
+            if hasattr(res, 'signed_url'):
+                return res.signed_url
+            if type(res) is str:
+                return res
+            return str(res)
+        except Exception:
+            return ""
 
     def size(self, name):
         try:
