@@ -13,6 +13,7 @@ cloudinary==1.44.2
 cron-descriptor==1.4.5
 dj-database-url==3.1.2
 Django==5.2.11
+django-anymail==15.0
 django-background-tasks==1.2.8
 django-celery-beat==2.9.0
 django-cloudinary-storage==0.3.0

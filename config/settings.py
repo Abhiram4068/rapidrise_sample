@@ -67,6 +67,7 @@ INSTALLED_APPS = [
     "corsheaders",
     "cloudinary",
     "cloudinary_storage",
+    "anymail"
 ]
 
 MIDDLEWARE = [
@@ -186,6 +187,12 @@ AUTH_COOKIE_HTTP_ONLY = True
 
 BREVO_API_KEY = os.getenv("BREVO_API_KEY")
 DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL")
+
+
+EMAIL_BACKEND = "anymail.backends.brevo.EmailBackend"
+ANYMAIL = {
+    "BREVO_API_KEY": BREVO_API_KEY,
+}
 
 BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL")
 FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL") 
