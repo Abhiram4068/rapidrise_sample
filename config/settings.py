@@ -17,9 +17,7 @@ import os
 from dotenv import load_dotenv
 from pathlib import Path
 from pythonjsonlogger import jsonlogger
-import cloudinary
-import cloudinary.uploader
-import cloudinary.api
+
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -65,9 +63,6 @@ INSTALLED_APPS = [
     'administration',
     'rest_framework',
     "corsheaders",
-    "cloudinary",
-    "cloudinary_storage",
-    "anymail"
 ]
 
 MIDDLEWARE = [
@@ -118,7 +113,7 @@ DATABASES = {
 
 STORAGES = {
     "default": {
-        "BACKEND": "cloudinary_storage.storage.MediaCloudinaryStorage",
+        "BACKEND": "files.supabase_storage.SupabaseStorage",
     },
     "staticfiles": {
         "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
@@ -164,6 +159,8 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / "staticfiles"
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / "media"
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "files.authentication.CookieJWTAuthentication",
@@ -309,8 +306,7 @@ CELERY_BEAT_SCHEDULE = {
          "schedule": crontab(minute=0, hour=2),
     }
 }
-CLOUDINARY_STORAGE = {
-    "CLOUD_NAME": os.getenv("CLOUDINARY_CLOUD_NAME"),
-    "API_KEY": os.getenv("CLOUDINARY_API_KEY"),
-    "API_SECRET": os.getenv("CLOUDINARY_API_SECRET"),
-}
+
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
