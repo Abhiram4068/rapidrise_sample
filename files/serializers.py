@@ -1,4 +1,4 @@
-from .models import User, File, FileShareLink
+from .models import User, File, FileShareLink, Collection, CollectionFile
 from rest_framework import serializers
 from django.contrib.auth.password_validation import validate_password
 from django.db import models
@@ -47,6 +47,7 @@ class LoginSerializer(serializers.Serializer):
     """
     file upload serializers
     """
+      
 class FileUploadSerialzier(serializers.Serializer):
     files=serializers.ListField(
         child=serializers.FileField(
@@ -89,17 +90,88 @@ class FileUploadSerialzier(serializers.Serializer):
         return data
 
 class FilesListSerializer(serializers.ModelSerializer):
+    created_at = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", read_only=True)
+    updated_at = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", read_only=True)
+    file_size = serializers.SerializerMethodField()
     class Meta:
         model=File
         fields=[
             'id',
             'original_name',
+            'is_starred',
             'file_size',
             'content_type',
             'description',
             'created_at',
+            'display_name',
             'is_deleted',
+            'updated_at'
         ]
+    def get_file_size(self, obj):
+        size = obj.file_size or 0 
+        kb = 1024
+        mb = 1024 * 1024
+        gb = 1024 * 1024 * 1024
+        if size < kb:
+            return f"{size} B"
+        elif size < mb:
+            return f"{size / kb:.2f} KB"
+        elif size < gb:
+            return f"{size / mb:.2f} MB"
+        else:
+            return f"{size / gb:.2f} GB"
+
+
+class FileUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = File
+        fields = ["display_name", "description", "updated_at", "is_starred"]
+
+    def validate_display_name(self, value):
+        if value and len(value.strip()) == 0:
+            raise serializers.ValidationError("Display name cannot be empty.")
+        return value
+    
+    
+class CollectionSerializer(serializers.ModelSerializer):
+    total_files = serializers.IntegerField(read_only=True)
+    total_size = serializers.IntegerField(read_only=True)
+
+    created_at = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", read_only=True)
+    updated_at = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", read_only=True)
+
+    class Meta:
+        model = Collection
+        fields = [
+            "id",
+            "name",
+            "description",
+            "is_starred",
+            "created_at",
+            "updated_at",
+            "total_files",
+            "total_size",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+
+class CollectionFileSerializer(serializers.ModelSerializer):
+    file_name = serializers.CharField(source="file.original_name", read_only=True)
+    file_size = serializers.IntegerField(source="file.file_size", read_only=True)
+    content_type = serializers.CharField(source="file.content_type", read_only=True)
+    
+    added_at = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", read_only=True)
+
+    class Meta:
+        model = CollectionFile
+        fields = [
+            "id",
+            "file_name",
+            "file_size",
+            "content_type",
+            "added_at",
+        ]
+        read_only_fields = ["id", "added_at"]
 
 class FileShareCreateSerializer(serializers.Serializer):
     recipient_email=serializers.EmailField()
